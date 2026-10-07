@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "andes": {
+      "source": {
+        "source": "github",
+        "repo": "Andes-Software-Solutions/awesome-claude-copilot"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "andes-core@andes": true,
+    "andes-terraform@andes": true
+  },
+  "effortLevel": "xhigh"
+}
