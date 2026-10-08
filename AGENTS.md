@@ -42,16 +42,30 @@ After changing code, run the matching reviewer on the diff: `andes-csharp-code-r
 
 ## About this repository
 
-<!-- What this repository is, who uses it, and what it deliberately does not contain. -->
+Terraform and Azure DevOps pipelines for the Andes application environments (dev now; qa/uat/staging/prod later). It holds infrastructure only; application code and app deployment pipelines live elsewhere. Architecture and runbooks: `docs/infrastructure.md`.
 
 ## Layout
 
-<!-- The folders that matter and how to navigate them. -->
+- `terraform/`: a single root module shared by every environment. Per-environment values live in `terraform/environments/<env>/{backend.hcl,terraform.tfvars}`.
+- `bootstrap/`: admin-only PowerShell that creates the state backend and each environment's resource group, pipeline identity and SQL admin group. The pipeline can't run these, by design.
+- `scripts/`: scripts the pipeline runs after apply (SQL contained user for the API identity).
+- `pipelines/`: Azure DevOps YAML (`infra-pipeline.yml` plus `templates/`).
 
 ## Build, test, run
 
-<!-- The exact commands to build, test, and run locally. -->
+```powershell
+terraform -chdir=terraform fmt -check -recursive
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+Invoke-ScriptAnalyzer -Path bootstrap -Recurse; Invoke-ScriptAnalyzer -Path scripts -Recurse
+```
+
+After changing provider versions, run `terraform -chdir=terraform providers lock -platform=linux_amd64 -platform=windows_amd64` and commit `.terraform.lock.hcl`.
 
 ## Conventions
 
-<!-- Project-specific rules the andes block above does not cover: branching, naming, review, release. -->
+- Name every resource `andes-<type>-<env>[-<sfx>]`; storage accounts drop the dashes (`andesst<env><sfx>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere.
+- No secrets anywhere: data services use managed identity and Entra RBAC. Keep shared keys, Cosmos DB keys and SQL authentication disabled.
+- Every Azure RBAC role Terraform assigns must be in `-AssignableRoleNames` of `bootstrap/New-AppEnvironment.ps1`. That list is enforced by an ABAC condition on the pipeline identity.
+- Add environments through tfvars and a pipeline template call, not by forking Terraform code.
+- Never commit `docs/plans/` or `*.tfvars` other than `terraform/environments/*/terraform.tfvars`, which must stay secret-free.

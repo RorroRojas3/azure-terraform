@@ -1,0 +1,59 @@
+# Infrastructure pipeline: PRs plan every environment; main plans, applies (behind ADO Environment checks)
+# and grants the API identity SQL access. Add an environment by appending one template call.
+
+name: infra-$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - terraform
+      - pipelines
+      - scripts
+
+# Honoured for GitHub/Bitbucket repos only; with Azure Repos, add this pipeline as a build validation
+# branch policy on main instead.
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - terraform
+      - pipelines
+      - scripts
+
+pool:
+  vmImage: ubuntu-24.04
+
+variables:
+  - name: terraformVersion
+    value: 1.16.5
+  # SHA256 of terraform_<version>_linux_amd64.zip from releases.hashicorp.com; update together with the version.
+  - name: terraformSha256
+    value: 2bc2fcfff033265c9e02ca0351f01794eb122f62a9b2a49a3294b9e49eaab5e4
+  - name: sqlServerModuleVersion
+    value: 22.4.5.1
+
+stages:
+  - template: templates/terraform-environment.yml
+    parameters:
+      environment: dev
+      serviceConnection: andes-sc-dev
+      # Shown on the service connection's page in Azure DevOps (not a secret).
+      serviceConnectionId: 00000000-0000-0000-0000-000000000000
+      adoEnvironment: andes-dev
+      variableGroup: andes-vg-dev
+
+  # Promote to the next environment after dev is applied, e.g.:
+  # - template: templates/terraform-environment.yml
+  #   parameters:
+  #     environment: qa
+  #     serviceConnection: andes-sc-qa
+  #     serviceConnectionId: 00000000-0000-0000-0000-000000000000
+  #     adoEnvironment: andes-qa
+  #     variableGroup: andes-vg-qa
+  #     dependsOn: [sql_dev]

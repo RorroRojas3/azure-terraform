@@ -1,0 +1,149 @@
+parameters:
+  - name: environment
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: serviceConnectionId
+    type: string
+  - name: adoEnvironment
+    type: string
+  # Holds the secret allowedIpAddresses, a JSON list such as ["203.0.113.10"], kept out of the repo.
+  - name: variableGroup
+    type: string
+  - name: dependsOn
+    type: object
+    default: []
+
+stages:
+  - stage: plan_${{ parameters.environment }}
+    displayName: Plan ${{ parameters.environment }}
+    dependsOn: ${{ parameters.dependsOn }}
+    # Runs on PRs even though the previous environment's main-only stages are skipped.
+    condition: and(not(failed()), not(canceled()))
+    jobs:
+      - job: plan
+        displayName: terraform plan
+        # Only plan needs it: apply runs the saved plan, which already carries the variable values.
+        variables:
+          - group: ${{ parameters.variableGroup }}
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - template: steps-install-terraform.yml
+
+          - template: steps-terraform.yml
+            parameters:
+              name: tfplan
+              displayName: terraform plan
+              serviceConnection: ${{ parameters.serviceConnection }}
+              serviceConnectionId: ${{ parameters.serviceConnectionId }}
+              env:
+                TF_VAR_allowed_ip_addresses: $(allowedIpAddresses)
+              script: |
+                terraform fmt -check -recursive
+                terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
+                terraform validate
+
+                exit_code=0
+                terraform plan -lock-timeout=5m \
+                  -var-file=environments/${{ parameters.environment }}/terraform.tfvars \
+                  -out=tfplan -detailed-exitcode || exit_code=$?
+                if [ "$exit_code" -eq 1 ]; then exit 1; fi
+
+                has_changes=false
+                if [ "$exit_code" -eq 2 ]; then has_changes=true; fi
+                echo "##vso[task.setvariable variable=hasChanges;isOutput=true]$has_changes"
+
+          - publish: $(Build.SourcesDirectory)/terraform/tfplan
+            artifact: tfplan-${{ parameters.environment }}
+            displayName: Publish plan
+            condition: and(succeeded(), eq(variables['tfplan.hasChanges'], 'true'))
+
+  - stage: apply_${{ parameters.environment }}
+    displayName: Apply ${{ parameters.environment }}
+    dependsOn: plan_${{ parameters.environment }}
+    condition: >-
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+        eq(dependencies.plan_${{ parameters.environment }}.outputs['plan.tfplan.hasChanges'], 'true')
+      )
+    jobs:
+      # Approvals, branch control and exclusive-lock checks live on the Azure DevOps Environment.
+      - deployment: apply
+        displayName: terraform apply
+        environment: ${{ parameters.adoEnvironment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  fetchDepth: 1
+
+                - download: current
+                  artifact: tfplan-${{ parameters.environment }}
+                  displayName: Download plan
+
+                - template: steps-install-terraform.yml
+
+                - template: steps-terraform.yml
+                  parameters:
+                    displayName: terraform apply
+                    serviceConnection: ${{ parameters.serviceConnection }}
+                    serviceConnectionId: ${{ parameters.serviceConnectionId }}
+                    script: |
+                      terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
+                      terraform apply -lock-timeout=5m "$(Pipeline.Workspace)/tfplan-${{ parameters.environment }}/tfplan"
+
+  # Runs after every successful main run, even when apply was skipped, so a failed grant is retried next run.
+  - stage: sql_${{ parameters.environment }}
+    displayName: SQL access ${{ parameters.environment }}
+    dependsOn:
+      - plan_${{ parameters.environment }}
+      - apply_${{ parameters.environment }}
+    condition: >-
+      and(
+        not(canceled()),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+        eq(dependencies.plan_${{ parameters.environment }}.result, 'Succeeded'),
+        in(dependencies.apply_${{ parameters.environment }}.result, 'Succeeded', 'Skipped')
+      )
+    jobs:
+      - job: grant
+        displayName: Grant API identity database access
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - template: steps-install-terraform.yml
+
+          - template: steps-terraform.yml
+            parameters:
+              displayName: Read Terraform outputs
+              serviceConnection: ${{ parameters.serviceConnection }}
+              serviceConnectionId: ${{ parameters.serviceConnectionId }}
+              script: |
+                terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
+                terraform output -json sql_access > "$(Agent.TempDirectory)/sql-access.json"
+
+          - task: AzurePowerShell@5
+            displayName: Create contained database user
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              azurePowerShellVersion: LatestVersion
+              pwsh: true
+              ScriptType: InlineScript
+              Inline: |
+                Install-PSResource -Name SqlServer -Version $env:SQLSERVER_MODULE_VERSION -Repository PSGallery `
+                  -TrustRepository -Scope CurrentUser -Quiet
+                $access = Get-Content -Raw "$env:AGENT_TEMPDIRECTORY/sql-access.json" | ConvertFrom-Json
+                & "$env:BUILD_SOURCESDIRECTORY/scripts/Grant-SqlManagedIdentityAccess.ps1" `
+                  -ResourceGroupName $access.resource_group_name `
+                  -SqlServerName $access.server_name `
+                  -DatabaseName $access.database_name `
+                  -PrincipalName $access.principal_name `
+                  -PrincipalClientId $access.principal_client_id `
+                  -AddRunnerFirewallRule
+            env:
+              SQLSERVER_MODULE_VERSION: $(sqlServerModuleVersion)
