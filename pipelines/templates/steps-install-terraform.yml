@@ -1,0 +1,15 @@
+steps:
+  - bash: |
+      set -euo pipefail
+      archive="terraform_${TF_VERSION}_linux_amd64.zip"
+      curl -fsSL --retry 3 -o "${AGENT_TEMPDIRECTORY}/${archive}" \
+        "https://releases.hashicorp.com/terraform/${TF_VERSION}/${archive}"
+      echo "${TF_SHA256}  ${AGENT_TEMPDIRECTORY}/${archive}" | sha256sum --check --strict -
+      install_dir="${AGENT_TOOLSDIRECTORY}/terraform/${TF_VERSION}"
+      mkdir -p "$install_dir"
+      unzip -oq "${AGENT_TEMPDIRECTORY}/${archive}" -d "$install_dir"
+      echo "##vso[task.prependpath]${install_dir}"
+    displayName: Install Terraform $(terraformVersion)
+    env:
+      TF_VERSION: $(terraformVersion)
+      TF_SHA256: $(terraformSha256)

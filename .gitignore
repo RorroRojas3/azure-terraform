@@ -9,6 +9,8 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
+# Per-environment values are non-secret and reviewed like code.
+!terraform/environments/*/terraform.tfvars
 override.tf
 override.tf.json
 *_override.tf
