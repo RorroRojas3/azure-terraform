@@ -130,7 +130,8 @@ if (-not $resourceGroup -or -not $pipelineIdentity) {
 
 $stateContainerScope = "$($stateAccount.Id)/blobServices/default/containers/$stateContainerName"
 $assignableRoleIds = $AssignableRoleNames | ForEach-Object {
-    $definition = Get-AzRoleDefinition -Name $_
+    # Only Id is read, which the announced PSRoleDefinition breaking change leaves intact.
+    $definition = Get-AzRoleDefinition -Name $_ -WarningAction SilentlyContinue
     if (-not $definition) { throw "Role definition '$_' not found." }
     $definition.Id
 }
