@@ -2,12 +2,12 @@ resource "azurerm_service_plan" "this" {
   name                = local.names.service_plan
   location            = var.location
   resource_group_name = data.azurerm_resource_group.this.name
-  os_type             = "Linux"
+  os_type             = "Windows"
   sku_name            = var.app_service_plan_sku
   tags                = local.tags
 }
 
-resource "azurerm_linux_web_app" "api" {
+resource "azurerm_windows_web_app" "api" {
   name                                           = local.names.api_app
   location                                       = var.location
   resource_group_name                            = data.azurerm_resource_group.this.name
@@ -34,12 +34,16 @@ resource "azurerm_linux_web_app" "api" {
     health_check_eviction_time_in_min = var.api_health_check_path == null ? null : 10
     vnet_route_all_enabled            = true
 
+    # The provider defaults Windows workers to 32-bit, on which a win-x64 publish fails to start.
+    use_32_bit_worker = false
+
     application_stack {
-      dotnet_version = "10.0"
+      current_stack  = "dotnet"
+      dotnet_version = "v10.0"
     }
 
     cors {
-      allowed_origins = concat(["https://${azurerm_linux_web_app.ui.default_hostname}"], var.api_cors_allowed_origins)
+      allowed_origins = concat(["https://${azurerm_windows_web_app.ui.default_hostname}"], var.api_cors_allowed_origins)
     }
   }
 
@@ -66,7 +70,9 @@ resource "azurerm_linux_web_app" "api" {
   }
 }
 
-resource "azurerm_linux_web_app" "ui" {
+# IIS serves the static Angular build, so the deployed package must include a web.config whose URL Rewrite
+# rule sends unknown paths to index.html; without it, deep links and refreshes return 404.
+resource "azurerm_windows_web_app" "ui" {
   name                                           = local.names.ui_app
   location                                       = var.location
   resource_group_name                            = data.azurerm_resource_group.this.name
@@ -82,10 +88,11 @@ resource "azurerm_linux_web_app" "ui" {
     http2_enabled           = true
     minimum_tls_version     = "1.2"
     scm_minimum_tls_version = "1.2"
-    app_command_line        = var.ui_app_command_line
 
+    # Node never serves requests here; the stack is set because the provider warns that omitting it misbehaves.
     application_stack {
-      node_version = "24-lts"
+      current_stack = "node"
+      node_version  = "~24"
     }
   }
 

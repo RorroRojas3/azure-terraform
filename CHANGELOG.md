@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - Terraform for the dev environment:
-  - Linux web apps for the .NET 10 API and the Angular 22 UI.
+  - Windows web apps for the .NET 10 API and the Angular 22 UI, which IIS serves as a static build.
   - Key Vault, Azure SQL (Basic), Cosmos DB (serverless), geo-redundant Blob Storage, and shared Application Insights.
   - The API reaches every data service through its user-assigned managed identity, with no keys or passwords.
   - Data services accept only allowlisted IPs and the API's subnet.

@@ -4,9 +4,9 @@ Terraform for the Andes application environments, run by an Azure DevOps pipelin
 
 | Component | Resource | Notes |
 | --- | --- | --- |
-| .NET 10 API | Linux web app `andes-api-<env>-<sfx>` | User-assigned identity, outbound VNet integration, health check `/health` |
-| Angular 22 UI | Linux web app `andes-ui-<env>-<sfx>` | Node 24 LTS, served by `pm2 serve --spa` |
-| Hosting plan | `andes-asp-<env>` | B1 in dev, shared by both apps |
+| .NET 10 API | Windows web app `andes-api-<env>-<sfx>` | .NET 10 on a 64-bit worker, user-assigned identity, outbound VNet integration, health check `/health` |
+| Angular 22 UI | Windows web app `andes-ui-<env>-<sfx>` | Static build served by IIS (needs `web.config`, see [Application integration](#application-integration)) |
+| Hosting plan | `andes-asp-<env>` | Windows, B1 in dev, shared by both apps |
 | API identity | `andes-id-api-<env>` | The only credential the API uses: no keys, passwords or connection-string secrets |
 | Secrets | Key Vault `andes-kv-<env>-<sfx>` | RBAC mode, for third-party secrets you add |
 | Relational data | Azure SQL `andes-sql-<env>-<sfx>` / `andes-sqldb-<env>` | Basic tier in dev; Entra-only authentication |
@@ -177,3 +177,25 @@ The API web app gets these app settings (none are secrets):
   - Deploy with Entra-authenticated zip deploy (for example `AzureWebApp@1` with a workload identity federation service connection). FTP and basic-auth publishing are disabled.
   - Terraform ignores `WEBSITE_RUN_FROM_PACKAGE`, so zip deploys don't fight it.
   - That pipeline's identity needs **Website Contributor** on the two web apps.
+  - **API:** publish framework-dependent or `win-x64`. The worker is 64-bit (`use_32_bit_worker = false`, because the provider defaults Windows workers to 32-bit and a `win-x64` publish fails to start on one).
+  - **UI:** IIS serves the static Angular build directly, so no Node process runs. The deployed package must include a `web.config` whose URL Rewrite rule sends paths that aren't files or directories to `/index.html`. Without it, deep links and page refreshes return 404. Put the file in the Angular project's `public/` folder so the build copies it next to `index.html`:
+
+    ```xml
+    <?xml version="1.0" encoding="utf-8"?>
+    <configuration>
+      <system.webServer>
+        <rewrite>
+          <rules>
+            <rule name="Angular routes" stopProcessing="true">
+              <match url=".*" />
+              <conditions logicalGrouping="MatchAll">
+                <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+                <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
+              </conditions>
+              <action type="Rewrite" url="/index.html" />
+            </rule>
+          </rules>
+        </rewrite>
+      </system.webServer>
+    </configuration>
+    ```

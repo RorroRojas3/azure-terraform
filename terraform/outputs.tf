@@ -5,22 +5,22 @@ output "resource_group_name" {
 
 output "api_url" {
   description = "Public URL of the API web app."
-  value       = "https://${azurerm_linux_web_app.api.default_hostname}"
+  value       = "https://${azurerm_windows_web_app.api.default_hostname}"
 }
 
 output "api_web_app_name" {
   description = "API web app name, for the application deployment pipeline."
-  value       = azurerm_linux_web_app.api.name
+  value       = azurerm_windows_web_app.api.name
 }
 
 output "ui_url" {
   description = "Public URL of the UI web app."
-  value       = "https://${azurerm_linux_web_app.ui.default_hostname}"
+  value       = "https://${azurerm_windows_web_app.ui.default_hostname}"
 }
 
 output "ui_web_app_name" {
   description = "UI web app name, for the application deployment pipeline."
-  value       = azurerm_linux_web_app.ui.name
+  value       = azurerm_windows_web_app.ui.name
 }
 
 output "api_identity" {

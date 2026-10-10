@@ -96,7 +96,7 @@ variable "vnet_address_space" {
 }
 
 variable "app_service_plan_sku" {
-  description = "Linux App Service plan SKU shared by the API and UI. B1 is the cheapest tier with VNet integration and always-on."
+  description = "Windows App Service plan SKU shared by the API and UI. B1 is the cheapest tier with VNet integration and always-on."
   type        = string
   default     = "B1"
 }
@@ -116,12 +116,6 @@ variable "api_cors_allowed_origins" {
   description = "Extra CORS origins for the API; the UI web app's own origin is always allowed."
   type        = list(string)
   default     = []
-}
-
-variable "ui_app_command_line" {
-  description = "Startup command for the Angular UI web app."
-  type        = string
-  default     = "pm2 serve /home/site/wwwroot --no-daemon --spa"
 }
 
 variable "log_analytics_retention_days" {
