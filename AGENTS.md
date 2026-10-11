@@ -47,7 +47,7 @@ Terraform and Azure DevOps pipelines for the Andes application environments (dev
 ## Layout
 
 - `terraform/`: a single root module shared by every environment. Per-environment values live in `terraform/environments/<env>/{backend.hcl,terraform.tfvars}`.
-- `bootstrap/`: admin-only, never run by the pipeline. `New-TfStateBackend.ps1` creates the state backend once per subscription. `bootstrap/terraform/` is a separate root module with its own admin-only state; one `environments` entry creates an environment's resource group, state container, plan and apply pipeline identities, SQL admin group, and Azure DevOps service connections, checks, variable group and environment.
+- `bootstrap/`: admin-only, never run by the pipeline. `New-TfStateBackend.ps1` creates the state backend once per subscription. `bootstrap/terraform/` is a separate root module with its own admin-only state; one `environments` entry creates an environment's resource group, state container, plan and apply pipeline identities, SQL admin group, and Azure DevOps service connections, checks and environment.
 - `scripts/`: scripts the pipeline runs after apply (SQL contained user for the API identity).
 - `pipelines/`: Azure DevOps YAML (`infra-pipeline.yml` plus `templates/`).
 

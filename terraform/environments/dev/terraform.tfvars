@@ -2,8 +2,7 @@ subscription_id = "290386d7-b5ac-433a-8c4c-db95cc6c36b4"
 location        = "eastus2"
 environment     = "dev"
 
-# allowed_ip_addresses is deliberately not set here: it comes from TF_VAR_allowed_ip_addresses
-# (your shell locally, the andes-vg-dev variable group in the pipeline).
+allowed_ip_addresses = ["136.55.198.208"]
 
 # From the sql_admin_group_object_ids output of bootstrap/terraform.
 sql_admin_group_name      = "andes-sg-sql-admins-dev"

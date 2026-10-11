@@ -52,26 +52,6 @@ resource "azuredevops_check_approval" "apply" {
   requester_can_approve = each.value.requester_can_approve
 }
 
-resource "azuredevops_variable_group" "environment" {
-  for_each = var.environments
-
-  project_id   = data.azuredevops_project.this.id
-  name         = "${var.name_prefix}-vg-${each.key}"
-  description  = "Inputs kept out of the repo for ${each.key}. Managed by bootstrap/terraform; edit values in the portal."
-  allow_access = false
-
-  variable {
-    name         = "allowedIpAddresses"
-    secret_value = "[]"
-    is_secret    = true
-  }
-
-  lifecycle {
-    # Values are edited in Pipelines > Library, so developers' IPs never pass through this state.
-    ignore_changes = [variable]
-  }
-}
-
 resource "azuredevops_environment" "this" {
   for_each = var.environments
 
@@ -86,15 +66,6 @@ resource "azuredevops_pipeline_authorization" "service_connection" {
   project_id  = data.azuredevops_project.this.id
   resource_id = azuredevops_serviceendpoint_azurerm.pipeline[each.key].id
   type        = "endpoint"
-  pipeline_id = data.azuredevops_build_definition.infra[0].id
-}
-
-resource "azuredevops_pipeline_authorization" "variable_group" {
-  for_each = var.infra_pipeline_name == null ? {} : var.environments
-
-  project_id  = data.azuredevops_project.this.id
-  resource_id = azuredevops_variable_group.environment[each.key].id
-  type        = "variablegroup"
   pipeline_id = data.azuredevops_build_definition.infra[0].id
 }
 

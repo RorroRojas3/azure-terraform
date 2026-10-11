@@ -35,7 +35,7 @@ variable "azure_devops_project" {
 }
 
 variable "infra_pipeline_name" {
-  description = "Name of the infrastructure pipeline in Azure DevOps. Set it once the pipeline exists to pre-authorize its service connections, variable groups and environments; null skips authorization."
+  description = "Name of the infrastructure pipeline in Azure DevOps. Set it once the pipeline exists to pre-authorize its service connections and environments; null skips authorization."
   type        = string
   default     = null
 }

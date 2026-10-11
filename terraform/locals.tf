@@ -29,4 +29,11 @@ locals {
 
   # Key Vault, Storage and Cosmos DB store single addresses without "/32" (Storage rejects it), so this avoids perpetual diffs.
   firewall_ip_rules = [for cidr in local.allowed_cidrs : trimsuffix(cidr, "/32")]
+
+  sql_firewall_rules = {
+    for cidr in local.allowed_cidrs : replace(replace(cidr, ".", "-"), "/", "_") => {
+      start = cidrhost(cidr, 0)
+      end   = cidrhost(cidr, -1)
+    }
+  }
 }

@@ -12,10 +12,6 @@ parameters:
   - name: name
     type: string
     default: ''
-  # Extra environment variables, e.g. secret variables, which Azure DevOps never maps into env on its own.
-  - name: env
-    type: object
-    default: {}
 
 steps:
   - task: AzureCLI@2
@@ -42,5 +38,3 @@ steps:
       SYSTEM_OIDCREQUESTURI: $(System.OidcRequestUri)
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: '0'
-      ${{ each variable in parameters.env }}:
-        ${{ variable.key }}: ${{ variable.value }}

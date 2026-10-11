@@ -22,9 +22,6 @@ stages:
     jobs:
       - job: plan
         displayName: terraform plan
-        # Holds the secret allowedIpAddresses, a JSON list such as ["203.0.113.10"], kept out of the repo.
-        variables:
-          - group: ${{ parameters.namePrefix }}-vg-${{ parameters.environment }}
         steps:
           - checkout: self
             fetchDepth: 1
@@ -38,8 +35,6 @@ stages:
               displayName: terraform plan
               serviceConnection: ${{ parameters.namePrefix }}-sc-${{ parameters.environment }}-plan
               serviceConnectionId: ${{ parameters.planServiceConnectionId }}
-              env:
-                TF_VAR_allowed_ip_addresses: $(allowedIpAddresses)
               script: |
                 terraform fmt -check -recursive
                 terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
