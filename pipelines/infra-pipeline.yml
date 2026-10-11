@@ -1,5 +1,6 @@
-# Infrastructure pipeline: PRs plan every environment; main plans, applies (behind ADO Environment checks)
-# and grants the API identity SQL access. Add an environment by appending one template call.
+# Infrastructure pipeline: PRs plan every environment with read-only identities; main also applies (behind the
+# checks on each apply service connection) and grants the API identity SQL access. Add an environment by
+# appending one template call.
 
 name: infra-$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -42,18 +43,14 @@ stages:
   - template: templates/terraform-environment.yml
     parameters:
       environment: dev
-      serviceConnection: andes-sc-dev
-      # Shown on the service connection's page in Azure DevOps (not a secret).
-      serviceConnectionId: 00000000-0000-0000-0000-000000000000
-      adoEnvironment: andes-dev
-      variableGroup: andes-vg-dev
+      # Printed by bootstrap/terraform (output service_connection_ids); not secrets.
+      planServiceConnectionId: 00000000-0000-0000-0000-000000000000
+      applyServiceConnectionId: 00000000-0000-0000-0000-000000000000
 
   # Promote to the next environment after dev is applied, e.g.:
   # - template: templates/terraform-environment.yml
   #   parameters:
   #     environment: qa
-  #     serviceConnection: andes-sc-qa
-  #     serviceConnectionId: 00000000-0000-0000-0000-000000000000
-  #     adoEnvironment: andes-qa
-  #     variableGroup: andes-vg-qa
-  #     dependsOn: [sql_dev]
+  #     planServiceConnectionId: 00000000-0000-0000-0000-000000000000
+  #     applyServiceConnectionId: 00000000-0000-0000-0000-000000000000
+  #     dependsOn: [apply_dev]

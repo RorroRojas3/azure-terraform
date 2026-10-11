@@ -60,7 +60,7 @@ variable "allowed_ip_addresses" {
 }
 
 variable "sql_admin_group_name" {
-  description = "Display name of the Entra security group that is the SQL server's Entra admin (created by bootstrap/New-AppEnvironment.ps1)."
+  description = "Display name of the Entra security group that is the SQL server's Entra admin (created by bootstrap/terraform)."
   type        = string
 }
 
@@ -70,7 +70,7 @@ variable "sql_admin_group_object_id" {
 
   validation {
     condition     = can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.sql_admin_group_object_id))
-    error_message = "sql_admin_group_object_id must be a GUID; copy it from the output of bootstrap/New-AppEnvironment.ps1."
+    error_message = "sql_admin_group_object_id must be a GUID; copy it from the sql_admin_group_object_ids output of bootstrap/terraform."
   }
 }
 

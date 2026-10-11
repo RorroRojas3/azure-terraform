@@ -10,13 +10,18 @@
     resources are converged to the settings below rather than recreated.
 
     The storage account accepts Microsoft Entra authentication only (shared keys disabled). Its network stays
-    open because Microsoft-hosted Azure DevOps agents use dynamic IPs; access is controlled by RBAC that
-    bootstrap/New-AppEnvironment.ps1 grants per environment container. Pass -AllowedIpAddresses only when every
-    Terraform run comes from known IPs (for example, self-hosted agents).
+    open because Microsoft-hosted Azure DevOps agents use dynamic IPs; access is controlled by RBAC that the
+    environment bootstrap (bootstrap/terraform) grants per environment container. Pass -AllowedIpAddresses only
+    when every Terraform run comes from known IPs (for example, self-hosted agents).
+
+    It also creates the tfstate-bootstrap container for bootstrap/terraform's own state. Only
+    -BootstrapAdminObjectIds can write it: a pipeline identity that could edit that state could steer the next
+    admin-run apply.
 
 .EXAMPLE
     Connect-AzAccount
-    ./bootstrap/New-TfStateBackend.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -Location eastus2
+    ./bootstrap/New-TfStateBackend.ps1 -SubscriptionId 00000000-0000-0000-0000-000000000000 -Location eastus2 `
+        -BootstrapAdminObjectIds 11111111-1111-1111-1111-111111111111
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -33,7 +38,10 @@ param(
     [ValidateSet('Standard_RAGRS', 'Standard_GRS', 'Standard_RAGZRS', 'Standard_GZRS')]
     [string]$SkuName = 'Standard_RAGRS',
 
-    [string[]]$AllowedIpAddresses = @()
+    [string[]]$AllowedIpAddresses = @(),
+
+    [ValidatePattern('^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')]
+    [string[]]$BootstrapAdminObjectIds = @()
 )
 
 Set-StrictMode -Version Latest
@@ -43,6 +51,7 @@ $ErrorActionPreference = 'Stop'
 
 $resourceGroupName = Get-TfStateResourceGroupName -NamePrefix $NamePrefix
 $storageAccountName = Get-TfStateStorageAccountName -NamePrefix $NamePrefix -SubscriptionId $SubscriptionId
+$bootstrapContainerName = 'tfstate-bootstrap'
 $tags = @{ company = $NamePrefix; purpose = 'terraform-state'; 'managed-by' = 'bootstrap' }
 
 Set-BootstrapAzContext -SubscriptionId $SubscriptionId
@@ -94,6 +103,20 @@ if ($PSCmdlet.ShouldProcess($storageAccountName, 'Configure network rules, versi
         -RetentionDays 30 | Out-Null
 }
 
+if (-not (Get-AzRmStorageContainer -ResourceGroupName $resourceGroupName -StorageAccountName $storageAccountName -Name $bootstrapContainerName -ErrorAction SilentlyContinue) -and
+    $PSCmdlet.ShouldProcess($bootstrapContainerName, 'Create bootstrap state container')) {
+    New-AzRmStorageContainer -ResourceGroupName $resourceGroupName -StorageAccountName $storageAccountName `
+        -Name $bootstrapContainerName -PublicAccess None | Out-Null
+}
+
+$storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroupName -Name $storageAccountName -ErrorAction SilentlyContinue
+if ($storageAccount) {
+    foreach ($objectId in $BootstrapAdminObjectIds) {
+        Set-RoleAssignment -ObjectId $objectId -RoleDefinitionName 'Storage Blob Data Contributor' `
+            -Scope "$($storageAccount.Id)/blobServices/default/containers/$bootstrapContainerName"
+    }
+}
+
 $lockName = 'protect-terraform-state'
 if (-not (Get-AzResourceLock -ResourceGroupName $resourceGroupName -LockName $lockName -ErrorAction SilentlyContinue) -and
     $PSCmdlet.ShouldProcess($resourceGroupName, 'Add CanNotDelete lock')) {
@@ -105,5 +128,6 @@ if (-not (Get-AzResourceLock -ResourceGroupName $resourceGroupName -LockName $lo
     ResourceGroupName  = $resourceGroupName
     StorageAccountName = $storageAccountName
     Sku                = $SkuName
-    NextStep           = "Run bootstrap/New-AppEnvironment.ps1 for each environment; backend.hcl uses storage_account_name = `"$storageAccountName`"."
+    BootstrapContainer = $bootstrapContainerName
+    NextStep           = "Set storage_account_name = `"$storageAccountName`" in every backend.hcl, then apply bootstrap/terraform."
 }

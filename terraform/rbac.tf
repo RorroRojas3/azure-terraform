@@ -1,5 +1,5 @@
-# Every Azure RBAC role used here must be in the allowlist of the pipeline identity's ABAC-constrained
-# "Role Based Access Control Administrator" assignment (bootstrap/New-AppEnvironment.ps1 -AssignableRoleNames).
+# Every Azure RBAC role used here must be in the allowlist of the apply identity's ABAC-constrained
+# "Role Based Access Control Administrator" assignment (assignable_role_names in bootstrap/terraform).
 
 locals {
   cosmos_data_contributor_role_id = "${azurerm_cosmosdb_account.this.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"

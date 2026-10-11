@@ -47,7 +47,7 @@ Terraform and Azure DevOps pipelines for the Andes application environments (dev
 ## Layout
 
 - `terraform/`: a single root module shared by every environment. Per-environment values live in `terraform/environments/<env>/{backend.hcl,terraform.tfvars}`.
-- `bootstrap/`: admin-only PowerShell that creates the state backend and each environment's resource group, pipeline identity and SQL admin group. The pipeline can't run these, by design.
+- `bootstrap/`: admin-only, never run by the pipeline. `New-TfStateBackend.ps1` creates the state backend once per subscription. `bootstrap/terraform/` is a separate root module with its own admin-only state; one `environments` entry creates an environment's resource group, state container, plan and apply pipeline identities, SQL admin group, and Azure DevOps service connections, checks, variable group and environment.
 - `scripts/`: scripts the pipeline runs after apply (SQL contained user for the API identity).
 - `pipelines/`: Azure DevOps YAML (`infra-pipeline.yml` plus `templates/`).
 
@@ -57,15 +57,20 @@ Terraform and Azure DevOps pipelines for the Andes application environments (dev
 terraform -chdir=terraform fmt -check -recursive
 terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform validate
+terraform -chdir=bootstrap/terraform fmt -check
+terraform -chdir=bootstrap/terraform init -backend=false
+terraform -chdir=bootstrap/terraform validate
 Invoke-ScriptAnalyzer -Path bootstrap -Recurse; Invoke-ScriptAnalyzer -Path scripts -Recurse
 ```
 
-After changing provider versions, run `terraform -chdir=terraform providers lock -platform=linux_amd64 -platform=windows_amd64` and commit `.terraform.lock.hcl`.
+After changing provider versions, run `terraform providers lock -platform=linux_amd64 -platform=windows_amd64` in both `terraform/` and `bootstrap/terraform/` and commit each `.terraform.lock.hcl`. Keep the azurerm version the same in both.
 
 ## Conventions
 
 - Name every resource `andes-<type>-<env>[-<sfx>]`; storage accounts drop the dashes (`andesst<env><sfx>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere.
 - No secrets anywhere: data services use managed identity and Entra RBAC. Keep shared keys, Cosmos DB keys and SQL authentication disabled.
-- Every Azure RBAC role Terraform assigns must be in `-AssignableRoleNames` of `bootstrap/New-AppEnvironment.ps1`. That list is enforced by an ABAC condition on the pipeline identity.
-- Add environments through tfvars and a pipeline template call, not by forking Terraform code.
-- Never commit `docs/plans/` or `*.tfvars` other than `terraform/environments/*/terraform.tfvars`, which must stay secret-free.
+- Every Azure RBAC role `terraform/` assigns must be in `assignable_role_names` in `bootstrap/terraform/variables.tf`. That list is enforced by an ABAC condition on each apply identity.
+- PR and plan stages use the read-only `<prefix>-sc-<env>-plan` connection; only apply and the SQL grant use `<prefix>-sc-<env>-apply`, which carries the branch control, exclusive lock and approval checks. Never point a plan step at the apply connection.
+- If `terraform/` starts using a resource whose refresh calls a POST list action, add that action to `azurerm_role_definition.plan_reader` in `bootstrap/terraform/rbac.tf`, or plans fail with AuthorizationFailed.
+- Add environments through an `environments` entry in `bootstrap/terraform/terraform.tfvars`, a `terraform/environments/<env>/` folder and a pipeline template call, not by forking Terraform code.
+- Never commit `docs/plans/` or `*.tfvars` other than `terraform/environments/*/terraform.tfvars` and `bootstrap/terraform/terraform.tfvars`, which must stay secret-free.

@@ -11,16 +11,17 @@ All notable changes to this project are documented here. The format follows [Kee
   - Key Vault, Azure SQL (Basic), Cosmos DB (serverless), geo-redundant Blob Storage, and shared Application Insights.
   - The API reaches every data service through its user-assigned managed identity, with no keys or passwords.
   - Data services accept only allowlisted IPs and the API's subnet.
-- Admin bootstrap scripts:
-  - One creates the geo-redundant Terraform state backend.
-  - One creates each environment with a pipeline identity limited to that environment's resource group and state container.
-- An Azure DevOps pipeline that plans on pull requests and applies on `main` through Azure DevOps Environments. It authenticates with workload identity federation and grants the API identity SQL access.
+- Admin-only bootstrap:
+  - `New-TfStateBackend.ps1` creates the geo-redundant Terraform state backend and an admin-only container for the bootstrap's own state.
+  - The `bootstrap/terraform` module creates each environment from one `environments` entry: resource group, state container, a read-only plan identity and a write-capable apply identity (each scoped to that environment), Azure DevOps service connections with their federated credentials, the apply connection's checks (main-only branch control, exclusive lock, optional approval), the `andes-vg-<env>` variable group, the Azure DevOps Environment and the SQL admin group. One `terraform apply` does it all, signed in with `az login` and no secrets.
+- An Azure DevOps pipeline that plans on pull requests with the read-only identity. Applies run on `main` only, through a lockable, approvable apply service connection, and then grant the API identity SQL access. It authenticates with workload identity federation.
 - Infrastructure guide: setup, adding environments, and a production checklist (`docs/infrastructure.md`).
 
 ### Security
 
+- Plan and apply use separate identities per environment, so a pull request branch can no longer run code with write access. Previously PR plans ran as the write-capable identity, and a same-repo branch runs its own pipeline YAML before review. PR plans now run as a read-only identity with no checks. The apply identity is reachable only through a `main`-only service connection with an exclusive lock and optional approval, and it can't assign roles to itself or to the plan identity.
 - The firewall IP allowlist (`allowed_ip_addresses`) is no longer committed in `terraform.tfvars`, so developers' public IPs stay out of the repo.
   - The variable is `sensitive`: plan output and pipeline logs show `(sensitive value)`. It still has no default, so a run that omits it fails instead of removing everyone's firewall access. Because plans no longer show the addresses, validation now rejects `0.0.0.0` (which SQL and Cosmos DB treat as "all Azure datacenters"), loopback, link-local and private ranges.
-  - The pipeline reads it from the secret `allowedIpAddresses` in a per-environment variable group, `andes-vg-<env>`, which must exist and be authorized before the next run. Locally, set `TF_VAR_allowed_ip_addresses`.
+  - The pipeline reads it from the secret `allowedIpAddresses` in a per-environment variable group, `andes-vg-<env>`. The bootstrap creates the group with `[]`; admins set the real list in Pipelines → Library, so the IPs never pass through bootstrap state. Locally, set `TF_VAR_allowed_ip_addresses`.
   - SQL firewall rules are now indexed (`allow-ip-0`, `allow-ip-1`, …), so the first apply on an existing environment replaces the current rule.
-  - State and the saved plan artifact still contain the values.
+  - The list is one JSON secret, which Azure DevOps can't mask address by address. State and the saved plan still contain the values, but the plan artifact is now published only on `main`.
