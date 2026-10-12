@@ -1,17 +1,18 @@
-subscription_id = "1263f7be-909a-448f-bd50-835e0df870b4"
+subscription_id = "290386d7-b5ac-433a-8c4c-db95cc6c36b4"
 location        = "eastus2"
 environment     = "dev"
 
-# allowed_ip_addresses is deliberately not set here: it comes from TF_VAR_allowed_ip_addresses
-# (your shell locally, the andes-vg-dev variable group in the pipeline).
+allowed_ip_addresses = ["136.55.198.208"]
 
-# Printed by bootstrap/New-AppEnvironment.ps1 -Environment dev.
+# From the sql_admin_group_object_ids output of bootstrap/terraform.
 sql_admin_group_name      = "andes-sg-sql-admins-dev"
-sql_admin_group_object_id = "REPLACE-WITH-BOOTSTRAP-OUTPUT"
+sql_admin_group_object_id = "b95fe8ce-9459-47c6-b248-2045eec6f2d7"
 
 developer_principal_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
 
-vnet_address_space     = "10.10.0.0/24"
+# 10.100-10.104 avoid every Windows App Service worker infrastructure range Microsoft lists
+# (overview-vnet-integration#windows-worker-ip-address-overlap); 10.10/10.11 would break private endpoints on B1.
+vnet_address_space     = "10.100.0.0/24"
 app_service_plan_sku   = "B1"
 aspnetcore_environment = "Development"
 

@@ -36,9 +36,8 @@ variable "tags" {
 }
 
 variable "allowed_ip_addresses" {
-  description = "Public IPv4 addresses or CIDR ranges allowed through the Key Vault, Storage, SQL and Cosmos DB firewalls. Supplied through TF_VAR_allowed_ip_addresses, never tfvars, so personal IPs stay out of the repo; use [] to allow none."
+  description = "Public IPv4 addresses or CIDR ranges allowed through the Key Vault, Storage, SQL and Cosmos DB firewalls; use [] to allow none."
   type        = list(string)
-  sensitive   = true
 
   validation {
     condition = alltrue([
@@ -48,8 +47,7 @@ variable "allowed_ip_addresses" {
     error_message = "Each entry must be an IPv4 address or CIDR range; /31 is rejected by Azure Storage."
   }
 
-  # The value is hidden from plans, so this is the only review it gets. SQL and Cosmos DB read 0.0.0.0 as
-  # "all Azure datacenters", and Storage rejects private ranges at apply time.
+  # SQL and Cosmos DB read 0.0.0.0 as "all Azure datacenters", and Storage rejects private ranges at apply time.
   validation {
     condition = alltrue([
       for ip in var.allowed_ip_addresses :
@@ -60,7 +58,7 @@ variable "allowed_ip_addresses" {
 }
 
 variable "sql_admin_group_name" {
-  description = "Display name of the Entra security group that is the SQL server's Entra admin (created by bootstrap/New-AppEnvironment.ps1)."
+  description = "Display name of the Entra security group that is the SQL server's Entra admin (created by bootstrap/terraform)."
   type        = string
 }
 
@@ -70,7 +68,7 @@ variable "sql_admin_group_object_id" {
 
   validation {
     condition     = can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", var.sql_admin_group_object_id))
-    error_message = "sql_admin_group_object_id must be a GUID; copy it from the output of bootstrap/New-AppEnvironment.ps1."
+    error_message = "sql_admin_group_object_id must be a GUID; copy it from the sql_admin_group_object_ids output of bootstrap/terraform."
   }
 }
 

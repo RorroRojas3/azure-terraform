@@ -18,13 +18,12 @@ resource "azurerm_mssql_server" "this" {
 }
 
 resource "azurerm_mssql_firewall_rule" "allowed" {
-  # Indexed rather than keyed by address: sensitive values can't be instance keys, and keys would leak the IPs.
-  count = nonsensitive(length(local.allowed_cidrs))
+  for_each = local.sql_firewall_rules
 
-  name             = "allow-ip-${count.index}"
+  name             = "allow-${each.key}"
   server_id        = azurerm_mssql_server.this.id
-  start_ip_address = cidrhost(local.allowed_cidrs[count.index], 0)
-  end_ip_address   = cidrhost(local.allowed_cidrs[count.index], -1)
+  start_ip_address = each.value.start
+  end_ip_address   = each.value.end
 }
 
 resource "azurerm_mssql_virtual_network_rule" "api" {

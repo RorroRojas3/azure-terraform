@@ -1,15 +1,14 @@
 parameters:
   - name: environment
     type: string
-  - name: serviceConnection
+  # Both IDs are printed by bootstrap/terraform (output service_connection_ids); the names follow its convention.
+  - name: planServiceConnectionId
     type: string
-  - name: serviceConnectionId
+  - name: applyServiceConnectionId
     type: string
-  - name: adoEnvironment
+  - name: namePrefix
     type: string
-  # Holds the secret allowedIpAddresses, a JSON list such as ["203.0.113.10"], kept out of the repo.
-  - name: variableGroup
-    type: string
+    default: andes
   - name: dependsOn
     type: object
     default: []
@@ -23,30 +22,27 @@ stages:
     jobs:
       - job: plan
         displayName: terraform plan
-        # Only plan needs it: apply runs the saved plan, which already carries the variable values.
-        variables:
-          - group: ${{ parameters.variableGroup }}
         steps:
           - checkout: self
             fetchDepth: 1
 
           - template: steps-install-terraform.yml
 
+          # PR branches run their own YAML before anyone reviews it, so plans only ever get the read-only identity.
           - template: steps-terraform.yml
             parameters:
               name: tfplan
               displayName: terraform plan
-              serviceConnection: ${{ parameters.serviceConnection }}
-              serviceConnectionId: ${{ parameters.serviceConnectionId }}
-              env:
-                TF_VAR_allowed_ip_addresses: $(allowedIpAddresses)
+              serviceConnection: ${{ parameters.namePrefix }}-sc-${{ parameters.environment }}-plan
+              serviceConnectionId: ${{ parameters.planServiceConnectionId }}
               script: |
                 terraform fmt -check -recursive
                 terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
                 terraform validate
 
+                # The plan identity can read state but not lease it; apply still locks and rejects a stale plan.
                 exit_code=0
-                terraform plan -lock-timeout=5m \
+                terraform plan -lock=false \
                   -var-file=environments/${{ parameters.environment }}/terraform.tfvars \
                   -out=tfplan -detailed-exitcode || exit_code=$?
                 if [ "$exit_code" -eq 1 ]; then exit 1; fi
@@ -55,11 +51,19 @@ stages:
                 if [ "$exit_code" -eq 2 ]; then has_changes=true; fi
                 echo "##vso[task.setvariable variable=hasChanges;isOutput=true]$has_changes"
 
+          # Saved plans hold variable values in cleartext, and only main-branch plans are ever applied.
           - publish: $(Build.SourcesDirectory)/terraform/tfplan
             artifact: tfplan-${{ parameters.environment }}
             displayName: Publish plan
-            condition: and(succeeded(), eq(variables['tfplan.hasChanges'], 'true'))
+            condition: >-
+              and(
+                succeeded(),
+                eq(variables['tfplan.hasChanges'], 'true'),
+                eq(variables['Build.SourceBranch'], 'refs/heads/main')
+              )
 
+  # Approval, main-only branch control and the exclusive lock sit on the apply service connection, where pipeline
+  # YAML can't bypass them. Checks run once per stage, so the grant job shares the apply job's approval.
   - stage: apply_${{ parameters.environment }}
     displayName: Apply ${{ parameters.environment }}
     dependsOn: plan_${{ parameters.environment }}
@@ -70,10 +74,10 @@ stages:
         eq(dependencies.plan_${{ parameters.environment }}.outputs['plan.tfplan.hasChanges'], 'true')
       )
     jobs:
-      # Approvals, branch control and exclusive-lock checks live on the Azure DevOps Environment.
+      # The Azure DevOps Environment only records deployment history.
       - deployment: apply
         displayName: terraform apply
-        environment: ${{ parameters.adoEnvironment }}
+        environment: ${{ parameters.namePrefix }}-${{ parameters.environment }}
         strategy:
           runOnce:
             deploy:
@@ -90,28 +94,16 @@ stages:
                 - template: steps-terraform.yml
                   parameters:
                     displayName: terraform apply
-                    serviceConnection: ${{ parameters.serviceConnection }}
-                    serviceConnectionId: ${{ parameters.serviceConnectionId }}
+                    serviceConnection: ${{ parameters.namePrefix }}-sc-${{ parameters.environment }}-apply
+                    serviceConnectionId: ${{ parameters.applyServiceConnectionId }}
                     script: |
                       terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
                       terraform apply -lock-timeout=5m "$(Pipeline.Workspace)/tfplan-${{ parameters.environment }}/tfplan"
 
-  # Runs after every successful main run, even when apply was skipped, so a failed grant is retried next run.
-  - stage: sql_${{ parameters.environment }}
-    displayName: SQL access ${{ parameters.environment }}
-    dependsOn:
-      - plan_${{ parameters.environment }}
-      - apply_${{ parameters.environment }}
-    condition: >-
-      and(
-        not(canceled()),
-        eq(variables['Build.SourceBranch'], 'refs/heads/main'),
-        eq(dependencies.plan_${{ parameters.environment }}.result, 'Succeeded'),
-        in(dependencies.apply_${{ parameters.environment }}.result, 'Succeeded', 'Skipped')
-      )
-    jobs:
+      # A separate job so "Rerun failed jobs" retries a failed grant without re-applying a now-stale plan.
       - job: grant
         displayName: Grant API identity database access
+        dependsOn: apply
         steps:
           - checkout: self
             fetchDepth: 1
@@ -121,8 +113,8 @@ stages:
           - template: steps-terraform.yml
             parameters:
               displayName: Read Terraform outputs
-              serviceConnection: ${{ parameters.serviceConnection }}
-              serviceConnectionId: ${{ parameters.serviceConnectionId }}
+              serviceConnection: ${{ parameters.namePrefix }}-sc-${{ parameters.environment }}-apply
+              serviceConnectionId: ${{ parameters.applyServiceConnectionId }}
               script: |
                 terraform init -backend-config=environments/${{ parameters.environment }}/backend.hcl
                 terraform output -json sql_access > "$(Agent.TempDirectory)/sql-access.json"
@@ -130,7 +122,7 @@ stages:
           - task: AzurePowerShell@5
             displayName: Create contained database user
             inputs:
-              azureSubscription: ${{ parameters.serviceConnection }}
+              azureSubscription: ${{ parameters.namePrefix }}-sc-${{ parameters.environment }}-apply
               azurePowerShellVersion: LatestVersion
               pwsh: true
               ScriptType: InlineScript

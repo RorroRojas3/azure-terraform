@@ -2,7 +2,7 @@ provider "azurerm" {
   subscription_id     = var.subscription_id
   storage_use_azuread = true
 
-  # bootstrap/New-AppEnvironment.ps1 registers providers; the pipeline identity has no subscription-scope rights.
+  # bootstrap/terraform registers providers; the pipeline identities have no subscription-scope rights.
   resource_provider_registrations = "none"
 
   features {

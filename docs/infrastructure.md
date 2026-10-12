@@ -17,110 +17,159 @@ Terraform for the Andes application environments, run by an Azure DevOps pipelin
 
 `<sfx>` is a 4-character hash of the resource group ID that keeps globally unique names unique.
 
+The environments themselves (resource group, state container, pipeline identities, service connections, SQL admin group) are created by a second Terraform module, `bootstrap/terraform/`, which an administrator runs. The pipeline never runs it.
+
 ## Security model
 
-Privileges are split between the people and identities involved:
+Each environment has two pipeline identities, and the split is the main control. Pull request branches run their own pipeline YAML before anyone reviews it, so anyone who can push a branch can run code as whatever identity PR plans use. PR plans therefore get a read-only identity; only `main` runs get the write-capable one. Microsoft's guidance says the same: use a separate read-only identity for plan, and put approvals on the service connection, not the environment, because environment checks "can be bypassed in code" ([CAF: DevOps security](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/considerations/security-considerations-overview)).
 
 | Who | Can do | Scope |
 | --- | --- | --- |
-| Azure administrator | Runs the bootstrap scripts: creates resource groups, identities, Entra groups and role assignments | Subscription Owner + Entra group creation |
-| Pipeline identity `andes-id-ado-<env>` | Contributor, plus role assignments limited to an allowlist of data roles | `andes-rg-<env>` only |
-| Pipeline identity `andes-id-ado-<env>` | Read/write Terraform state | Its own `tfstate-<env>` container only |
+| Azure administrator | Runs `New-TfStateBackend.ps1` and `bootstrap/terraform`: creates resource groups, identities, service connections, checks, Entra groups and role assignments | Subscription Owner, Entra Groups Administrator (or higher), Azure DevOps project administrator |
+| Plan identity `andes-id-ado-<env>-plan` | Read everything Terraform refreshes (custom role `andes-terraform-plan-reader`: `*/read` plus four list actions the azurerm provider calls) and read state (Storage Blob Data Reader). Can't write resources or take the state lease | `andes-rg-<env>` and `tfstate-<env>` only |
+| Apply identity `andes-id-ado-<env>-apply` | Contributor; Role Based Access Control Administrator limited by an ABAC condition (below); Storage Blob Data Contributor on state; member of the SQL admin group | `andes-rg-<env>` and `tfstate-<env>` only |
+| State contributors (`state_contributor_object_ids`) | Read/write Terraform state, to run Terraform locally | That environment's `tfstate-<env>` container |
 | API identity `andes-id-api-<env>` | Key Vault Secrets User, Storage Blob Data Contributor, Cosmos DB Data Contributor, SQL `db_datareader` + `db_datawriter` | That environment's resources |
 | Developers (`developer_principal_ids`, dev only) | Key Vault Secrets Officer, Blob Data Contributor, Cosmos DB Data Contributor | Dev resources |
 | SQL admins (`andes-sg-sql-admins-<env>`) | SQL Entra admin | That environment's SQL server |
 
-- **The pipeline can't escalate.** Its *Role Based Access Control Administrator* assignment has an ABAC condition that only allows the roles in `-AssignableRoleNames`, so it can never grant Owner, Contributor or User Access Administrator.
-- **The pipeline can't touch its own identity or other environments.** Its identity lives in `andes-rg-tfstate`, outside the resource group it manages, and has no rights at subscription scope.
-- **No secrets exist.** The pipeline signs in with workload identity federation, and the API uses its managed identity everywhere. Storage shared keys, Cosmos DB keys and SQL authentication are all disabled.
+Each identity is used through its own Azure DevOps service connection:
+
+| Connection | Identity | Used by | Checks |
+| --- | --- | --- | --- |
+| `andes-sc-<env>-plan` | Plan | PR plans and `main` plans | None |
+| `andes-sc-<env>-apply` | Apply | Apply and SQL grant (`main` only) | Branch control (`refs/heads/main` only), exclusive lock, and an approval when `approver_emails` is set |
+
+- **The pipeline can't escalate.** The apply identity's *Role Based Access Control Administrator* assignment has an ABAC condition. It allows assigning or removing only the roles in `assignable_role_names` (`bootstrap/terraform/variables.tf`) and never for the environment's own plan or apply identity. So it can't grant Owner, Contributor or User Access Administrator, and it can't give itself data-plane access. See [Delegate Azure access management](https://learn.microsoft.com/azure/role-based-access-control/delegate-role-assignments-overview).
+- **PR branches can't run code with write access.** Plans use the read-only connection, which carries no checks, so PR runs aren't blocked. The checks sit on the apply connection, where pipeline YAML can't remove them ([Define approvals and checks](https://learn.microsoft.com/azure/devops/pipelines/process/approvals)). The Azure DevOps Environment `andes-<env>` has no checks and only records deployment history.
+- **The pipeline can't touch its own identity or other environments.** Both identities live in `andes-rg-tfstate`, outside the resource group they manage, and have no rights at subscription scope.
+- **No pipeline identity can tamper with admin state.** `bootstrap/terraform` keeps its state in the `tfstate-bootstrap` container, writable only by `-BootstrapAdminObjectIds`.
+- **No secrets exist.** The pipeline signs in with workload identity federation, the admin signs in with `az login` (no personal access token), and the API uses its managed identity everywhere. Storage shared keys, Cosmos DB keys and SQL authentication are all disabled.
 - **Network:**
-  - Key Vault, Storage, SQL and Cosmos DB keep public endpoints, but their firewalls deny everything except `allowed_ip_addresses` and the API's subnet.
-  - `allowed_ip_addresses` is `sensitive` and kept out of the repo, so developers' public IPs aren't committed. See [Where the IP allowlist lives](#where-the-ip-allowlist-lives).
+  - Key Vault, Storage, SQL and Cosmos DB keep public endpoints, but their firewalls deny everything except the IPs in `allowed_ip_addresses` (set in each environment's `terraform.tfvars`) and the API's subnet. Prod moves to private endpoints (see the [production checklist](#production-checklist)).
+  - `allowed_ip_addresses` has no default, so a run that omits it fails instead of silently removing everyone's firewall access. Pass `[]` to allow no IPs. Validation rejects `/31` ranges, `0.0.0.0/8` (SQL and Cosmos DB treat `0.0.0.0` as "all Azure datacenters"), loopback, link-local and private ranges (Storage rejects private ranges at apply time).
   - The web apps themselves are public.
   - The API uses VNet integration with service endpoints because Azure Storage IP rules can't admit an App Service in the same region.
 
+## How the pipeline runs
+
+Per environment, `pipelines/infra-pipeline.yml` calls `pipelines/templates/terraform-environment.yml`:
+
+1. **`plan_<env>`** (PRs and `main`): runs `fmt -check`, `validate` and `terraform plan -lock=false` on the plan connection. The plan identity can read state but not lease it; apply still locks and Terraform rejects a stale saved plan. The plan artifact `tfplan-<env>` is published only on `main`, because saved plans hold variable values in cleartext and PR plans are never applied.
+2. **`apply_<env>`** (`main` only, and only when the plan has changes): uses the apply connection, so its checks run once for the whole stage. Two jobs:
+   - `apply` is a deployment job targeting the `andes-<env>` Environment. It applies the saved plan.
+   - `grant` creates the API identity's SQL contained user. It's a separate job so **Rerun failed jobs** retries a failed grant without re-applying a stale plan. One approval covers both jobs.
+
+The template takes `environment`, `planServiceConnectionId`, `applyServiceConnectionId`, `dependsOn` and an optional `namePrefix`. Service connection and Environment names follow the `andes-*` convention.
+
 ## First-time setup (per subscription, then per environment)
 
-Prerequisites:
-- PowerShell 7.4+ with the `Az` modules.
-- `Connect-AzAccount` as an account that is Owner on the subscription and can create Entra security groups.
+1. **Prerequisites:**
+   - PowerShell 7.4+ with the `Az.Accounts`, `Az.Resources` and `Az.Storage` modules, Terraform, and the Azure CLI.
+   - An Azure DevOps organization and project.
+   - An administrator account with all of these, used through one `az login`: Owner on the subscription (role assignments, the custom role definition, resource provider registration), Entra Groups Administrator or higher, and Azure DevOps project administrator rights (service connections, environments, checks).
+   - A new Azure DevOps organization has no Microsoft-hosted parallel jobs by default. Request the free grant at <https://aka.ms/azpipelines-parallelism-request> before the first run.
 
-1. **State backend (once per subscription):**
-
-   ```powershell
-   ./bootstrap/New-TfStateBackend.ps1 -SubscriptionId <subscription-id> -Location eastus2
-   ```
-
-   This creates `andes-rg-tfstate` (with a delete lock) and `andessttfstate<hash>`. The account is geo-redundant (RA-GRS), uses Entra auth only, and has versioning and 30-day soft delete.
-
-2. **Environment, first pass:**
+2. **State backend (once per subscription):**
 
    ```powershell
-   ./bootstrap/New-AppEnvironment.ps1 -SubscriptionId <subscription-id> -Environment dev -Location eastus2 `
-       -SqlAdminMemberObjectIds <your-entra-object-id>
+   Connect-AzAccount
+   ./bootstrap/New-TfStateBackend.ps1 -SubscriptionId <subscription-id> -Location eastus2 `
+       -BootstrapAdminObjectIds <your-entra-object-id>
    ```
 
-   Note `PipelineIdentityClientId`, `TenantId` and `SqlAdminGroupObjectId` from the output.
+   Find your object ID with `az ad signed-in-user show --query id -o tsv`.
 
-3. **Azure DevOps service connection.**
-   1. In **Project settings → Service connections**, create **Azure Resource Manager**, **App registration or managed identity (manual)**, **Workload identity federation**, named `andes-sc-dev`.
-   2. Use the tenant ID, subscription, and the pipeline identity's client ID.
-   3. Don't grant access to all pipelines.
-   4. Save it as a **draft** and copy its **Issuer** and **Subject identifier**.
+   This creates `andes-rg-tfstate` (with a delete lock) and `andessttfstate<hash>`. The account is geo-redundant (RA-GRS), uses Entra auth only, and has versioning and 30-day soft delete. It also creates the `tfstate-bootstrap` container for the bootstrap module's own state. Only `-BootstrapAdminObjectIds` get Storage Blob Data Contributor on it. The script prints the account name.
 
-4. **Environment, second pass** (adds the federated credential):
+3. **Fill in `bootstrap/terraform/terraform.tfvars`:**
+   - `azure_devops_org_url` (`https://dev.azure.com/<organization>`) and `azure_devops_project`.
+   - `entra_group_owner_object_ids`: owners of the SQL admin groups (required).
+   - The `environments` map, one entry per environment (see [Adding an environment](#adding-an-environment-qa-uat-staging-prod) for the fields).
+
+   Check that `storage_account_name` in `bootstrap/terraform/backend.hcl` matches the account name the script printed.
+
+4. **Apply the bootstrap:**
 
    ```powershell
-   ./bootstrap/New-AppEnvironment.ps1 -SubscriptionId <subscription-id> -Environment dev -Location eastus2 `
-       -SqlAdminMemberObjectIds <your-entra-object-id> `
-       -AdoFederationIssuer '<issuer>' -AdoFederationSubject '<subject>'
+   az login
+   terraform -chdir=bootstrap/terraform init -backend-config=backend.hcl
+   terraform -chdir=bootstrap/terraform plan
+   terraform -chdir=bootstrap/terraform apply
    ```
 
-   Then select **Verify and save** on the service connection.
+   One apply registers the resource providers and creates, for each environment:
+   - Resource group `andes-rg-<env>` and state container `tfstate-<env>` (both `prevent_destroy`).
+   - Identities `andes-id-ado-<env>-plan` and `andes-id-ado-<env>-apply` in `andes-rg-tfstate`, with their role assignments.
+   - Service connections `andes-sc-<env>-plan` and `andes-sc-<env>-apply`, and their federated credentials. The credential's subject embeds the connection's GUID, so Terraform reads the issuer and subject from the connection and creates the credential in the same apply.
+   - The apply connection's checks: branch control, exclusive lock and, when `approver_emails` is set, approval.
+   - Entra group `andes-sg-sql-admins-<env>` (the apply identity plus `sql_admin_member_object_ids`).
+   - The Azure DevOps Environment `andes-<env>`.
 
-5. **Wire up the repo:**
-   - In `terraform/environments/dev/terraform.tfvars`, set `sql_admin_group_object_id` to `SqlAdminGroupObjectId`.
-   - In `pipelines/infra-pipeline.yml`, set `serviceConnectionId` to the service connection's ID (shown in its URL/details).
+5. **Wire up the repo** from the outputs (`terraform -chdir=bootstrap/terraform output`):
+   - `sql_admin_group_object_ids`: set `sql_admin_group_object_id` in `terraform/environments/dev/terraform.tfvars`.
+   - `service_connection_ids`: set `planServiceConnectionId` and `applyServiceConnectionId` in `pipelines/infra-pipeline.yml`.
 
-6. **Azure DevOps pipeline and environment:**
-   1. Create the pipeline from `pipelines/infra-pipeline.yml`.
-   2. Create the Environment `andes-dev`. Add approvals and an exclusive lock for qa and prod.
-   3. Authorize the pipeline to use the service connection and the environment.
-   4. Create the variable group `andes-vg-dev` (see [Where the IP allowlist lives](#where-the-ip-allowlist-lives)):
-      1. In **Pipelines → Library**, select **+ Variable group** and name it `andes-vg-dev`.
-      2. Add the variable `allowedIpAddresses` with a JSON list as its value, for example `["203.0.113.10"]`. Select the lock icon to make it secret.
-      3. Under **Pipeline permissions**, authorize the infra pipeline.
-   5. With Azure Repos, add the pipeline as a **build validation** branch policy on `main`, so PRs get a plan.
+   Also set `allowed_ip_addresses` in the same `terraform.tfvars` to the public IPs that need firewall access, for example `["203.0.113.10"]`. None of these values is a secret.
 
-   The group must exist and the pipeline must be authorized to use it before the first run, or the run fails at queue time.
+6. **Create the empty state (once per environment).** The read-only plan identity can't create the initial state, because the azurerm backend takes a lease to do it. Someone in `state_contributor_object_ids` runs:
 
-7. **Run the pipeline.** PR runs plan only. Runs on `main` plan, apply when there are changes, then run `scripts/Grant-SqlManagedIdentityAccess.ps1`. That script creates the API identity's contained database user (`CREATE USER … WITH SID … TYPE = E`, so the SQL server doesn't need the Directory Readers role) and grants `db_datareader` and `db_datawriter`.
+   ```powershell
+   az login
+   terraform -chdir=terraform init -backend-config=environments/dev/backend.hcl
+   ```
+
+   If you skip this, the first pipeline plan fails with `Error loading state: failed to lock azure state`.
+
+7. **Create the pipeline.** In Azure DevOps, select **Pipelines → New pipeline → GitHub**, choose this repo and the existing file `/pipelines/infra-pipeline.yml`, and name it (for example `andes-infra`). Then uncomment `infra_pipeline_name = "andes-infra"` in `bootstrap/terraform/terraform.tfvars` and re-apply the bootstrap. That authorizes the pipeline to use both service connections and the Environment, so runs don't stop at "needs permission". A run started before this re-apply fails or waits for permission; re-run it afterwards.
+
+8. **Run it.** A PR plans on the plan connection (the `pr:` trigger in `infra-pipeline.yml` starts it; no branch policy is needed). Merging to `main` plans again, then applies when there are changes (after approval, if configured), then runs `scripts/Grant-SqlManagedIdentityAccess.ps1`. That script creates the API identity's contained database user (`CREATE USER … WITH SID … TYPE = E`, so the SQL server doesn't need the Directory Readers role) and grants `db_datareader` and `db_datawriter`.
 
 ## Adding an environment (qa, uat, staging, prod)
 
-1. Run `New-AppEnvironment.ps1 -Environment <env>` (both passes) and create `andes-sc-<env>`.
-2. Copy `terraform/environments/dev/` to `terraform/environments/<env>/`. In the copy:
+1. **Add an entry** to `environments` in `bootstrap/terraform/terraform.tfvars`:
+
+   | Field | Meaning |
+   | --- | --- |
+   | `sql_admin_member_object_ids` | People added to the SQL admin group (the apply identity is always a member) |
+   | `state_contributor_object_ids` | People who may run Terraform locally against this environment's state |
+   | `approver_emails` | Azure DevOps users who must approve each apply; empty means no approval (fine for dev) |
+   | `requester_can_approve` | Let whoever triggered the run approve it; needed when one person both merges and approves |
+
+   Environment names are 2-7 lowercase letters.
+2. **Apply the bootstrap** (`terraform -chdir=bootstrap/terraform apply`) and read the new outputs.
+3. **Copy** `terraform/environments/dev/` to `terraform/environments/<env>/`. In the copy:
    - Change `container_name` in `backend.hcl` to `tfstate-<env>`.
    - In `terraform.tfvars`, set `environment` and `sql_admin_group_object_id`.
-   - Use a new `vnet_address_space` (e.g. qa `10.11.0.0/24`, uat `10.12.0.0/24`, staging `10.13.0.0/24`, prod `10.14.0.0/24`).
+   - Set `vnet_address_space` from the [address plan](#address-plan).
    - Choose sizing.
-   - Set `developer_principal_ids = []` outside dev.
-   - Don't add `allowed_ip_addresses`; it comes from the variable group (next step).
-3. Create the Azure DevOps Environment `andes-<env>` with approvals.
-4. Create the variable group `andes-vg-<env>` with a secret `allowedIpAddresses` (a JSON list, `[]` for no IPs, e.g. prod) and authorize the pipeline to use it.
-5. Uncomment or add the template call in `pipelines/infra-pipeline.yml` with `variableGroup: andes-vg-<env>` and `dependsOn: [sql_<previous env>]`.
+   - Set `developer_principal_ids = []`.
+   - Set `allowed_ip_addresses`, for example `["203.0.113.10"]`. Use `[]` for no IPs (fine for prod).
+4. **Create the empty state:** `terraform -chdir=terraform init -backend-config=environments/<env>/backend.hcl`, run by someone in `state_contributor_object_ids`.
+5. **Add the template call** in `pipelines/infra-pipeline.yml` with both connection IDs from `service_connection_ids` and `dependsOn: [apply_<previous env>]`:
+
+   ```yaml
+   - template: templates/terraform-environment.yml
+     parameters:
+       environment: qa
+       planServiceConnectionId: <plan id>
+       applyServiceConnectionId: <apply id>
+       dependsOn: [apply_dev]
+   ```
 
 No Terraform code changes are needed.
 
-## Where the IP allowlist lives
+### Address plan
 
-The firewall allowlist (`allowed_ip_addresses`) is the one input that isn't in `terraform.tfvars`, so developers' personal public IPs stay out of the repo. It is a `sensitive` variable, so plan output and pipeline logs show `(sensitive value)` instead of addresses.
+Windows App Service workers on B1, S1 and P1 use `10.10.0.0/19` and `10.11.0.0/19` (other SKUs use other ranges) as infrastructure IPs, and a Windows app can't reach a destination in those ranges through VNet integration ([Windows worker IP overlap](https://learn.microsoft.com/azure/app-service/overview-vnet-integration#windows-worker-ip-address-overlap)). That's harmless with service endpoints but fatal for the first private endpoint. The plan below is clear of every range Microsoft lists for any SKU. Microsoft says the ranges can change, so re-check the table when you change SKU.
 
-- **No default, on purpose.** A run that forgets it fails with "No value for required variable" instead of silently removing everyone's firewall access. Pass `[]` to allow no IPs.
-- **Pipeline:** the plan job links the variable group `andes-vg-<env>` (the `variableGroup` template parameter in `pipelines/infra-pipeline.yml`) and maps its secret `allowedIpAddresses` to `TF_VAR_allowed_ip_addresses`. Secret variables aren't exposed to steps automatically, so `steps-terraform.yml` takes an `env` parameter for the mapping. Apply uses the saved plan and needs nothing.
-- **Locally:** set `TF_VAR_allowed_ip_addresses` to the same JSON list before you plan or apply (see [Day-to-day](#day-to-day)). A local apply with a different list is reverted by the next pipeline run.
-- **SQL firewall rules are indexed** (`azurerm_mssql_firewall_rule.allowed[0]`, named `allow-ip-0`, `allow-ip-1`, …) because sensitive values can't be `for_each` keys, and address-based keys would leak the IPs into resource addresses. On an environment deployed before this change, the first apply replaces the existing SQL firewall rule with `allow-ip-0`. Reordering the list renames rules the same way. Both are harmless.
-- **`sensitive` only hides values from console output.** Terraform state and the saved plan file (the `tfplan-<env>` pipeline artifact) still contain them, so keep access to both restricted.
+| Environment | `vnet_address_space` |
+| --- | --- |
+| dev | `10.100.0.0/24` |
+| qa | `10.101.0.0/24` |
+| uat | `10.102.0.0/24` |
+| staging | `10.103.0.0/24` |
+| prod | `10.104.0.0/24` |
 
 ## Production checklist
 
@@ -128,27 +177,28 @@ The firewall allowlist (`allowed_ip_addresses`) is the one input that isn't in `
 - **Key Vault:** `key_vault_purge_protection_enabled = true`, `key_vault_soft_delete_retention_days = 90` (these are the defaults).
 - **SQL:** S0 or higher (or General Purpose); `sql_backup_storage_redundancy = "Geo"` (the default).
 - **Cosmos DB:** decide between serverless and autoscale (`cosmos_serverless = false`, `cosmos_autoscale_max_throughput`). Switching capacity mode may require recreating the account, so decide before data lands.
+- **Name suffix:** decide whether the 4-character `<sfx>` is long enough before prod. Changing it later recreates resources.
+- **Approvals:** set `approver_emails` (and `requester_can_approve` if one person merges and approves) for qa and prod in `bootstrap/terraform/terraform.tfvars`, then re-apply the bootstrap.
 - **Admin hardening:**
-  - The administrator adds a `CanNotDelete` lock on `andes-rg-prod`. The pipeline identity can't manage locks.
+  - The administrator adds a `CanNotDelete` lock on `andes-rg-prod`. The pipeline identities can't manage locks.
   - Enable Microsoft Defender for Cloud plans for SQL, Storage, Key Vault and App Service.
-- **Network:** consider private endpoints if public endpoints must be disabled entirely. Pipeline agents then need network line-of-sight (self-hosted agents or Managed DevOps Pools).
-- **PR safety:** PR plans run with the same identity as applies, so protect `main` with required reviewers. A separate read-only service connection for PR plans is a future improvement.
+- **Network:**
+  - Prod uses private endpoints with public network access disabled for Key Vault, Storage, SQL and Cosmos DB. Microsoft's networking guide maps production workloads to private endpoints ([Private access to Azure PaaS services](https://learn.microsoft.com/azure/networking/design-guide/private-platform-as-a-service)), and the Microsoft cloud security benchmark rates it a must-have ([NS-2](https://learn.microsoft.com/security/benchmark/azure/mcsb-v2-network-security#ns-2-secure-cloud-native-services-with-network-controls)).
+  - That changes the prod pipeline. Microsoft-hosted agents can't reach private endpoints, and the SQL grant's temporary firewall rule stops working once SQL refuses public traffic. Prod needs [Managed DevOps Pools with VNet injection](https://learn.microsoft.com/azure/devops/managed-devops-pools/configure-networking?view=azure-devops#agents-injected-into-existing-virtual-network): a subnet delegated to `Microsoft.DevOpsInfrastructure/pools`, the pool and VNet in the same region, and an address plan that avoids `172.17.0.0/16`.
+  - Staging mirrors prod's network setup, so private DNS, agents and the SQL grant are tested before prod.
+- **Prod shares the subscription (accepted trade-off).** The team keeps prod in the same subscription as the other environments, against CAF's guidance to use separate subscriptions for production and nonproduction ([CAF: Create and scale Azure subscriptions](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-setup-guide/initial-subscriptions#start-with-subscription-policies)). What that means:
+  - Subscription Owners and Contributors, and subscription-scope policy, also control prod.
+  - Defender for Cloud plans enabled at subscription level cover (and bill) every environment.
+  - Prod and non-prod share `andes-rg-tfstate` and the state account.
+
+  Mitigations in place: per-environment identities scoped to their own resource group and state container, approval on prod's apply connection, and the `CanNotDelete` lock on `andes-rg-prod`. Keep the subscription Owner list short.
 
 ## Day-to-day
 
-- **Change your IP:** update the `allowedIpAddresses` secret in the `andes-vg-<env>` variable group (**Pipelines → Library**) and re-run the pipeline. No PR is needed. The SQL, Key Vault, Storage and Cosmos DB firewalls follow.
+- **Change your IP:** edit `allowed_ip_addresses` in `terraform/environments/<env>/terraform.tfvars`, open a PR (the plan shows the firewall changes) and merge. The SQL, Key Vault, Storage and Cosmos DB firewalls follow. SQL firewall rules are keyed by address, for example `azurerm_mssql_firewall_rule.allowed["203-0-113-10_32"]` named `allow-203-0-113-10_32`, so changing an address replaces only its own rule.
 - **Add blob containers or Cosmos DB containers:** edit `storage_containers` or `cosmos_containers` in tfvars. Cosmos DB containers must be declared here, because Entra data-plane roles can't create databases or containers.
-- **Run Terraform locally:** you need `Storage Blob Data Contributor` on the `tfstate-<env>` container (`New-AppEnvironment.ps1 -StateContributorObjectIds`). Set the IP allowlist first, using the same list as the pipeline's `allowedIpAddresses` so the next pipeline run doesn't revert the firewalls:
-
-  ```powershell
-  # One or more addresses, as a JSON list
-  $env:TF_VAR_allowed_ip_addresses = '["203.0.113.10","203.0.113.11"]'
-
-  # Or only your current public IP
-  $env:TF_VAR_allowed_ip_addresses = "[`"$(Invoke-RestMethod https://api.ipify.org)`"]"
-  ```
-
-  The second form yields `["203.0.113.10"]` when the lookup returns `203.0.113.10`. Avoid piping a single address into `ConvertTo-Json`: it unwraps the array to a bare string, which Terraform rejects. Then run:
+- **Retry a failed SQL grant:** use **Rerun failed jobs** on the run. It re-runs `grant` without re-applying.
+- **Run Terraform locally:** you need `Storage Blob Data Contributor` on the `tfstate-<env>` container, which listing your object ID in `state_contributor_object_ids` (bootstrap tfvars) grants. Then run:
 
   ```powershell
   az login
@@ -158,6 +208,16 @@ The firewall allowlist (`allowed_ip_addresses`) is the one input that isn't in `
 
   Prefer applying through the pipeline.
 - **Let the API run EF Core migrations itself:** run `Grant-SqlManagedIdentityAccess.ps1` with `-Roles db_datareader, db_datawriter, db_ddladmin`. Running migrations from the application pipeline as a SQL admin group member is the tighter option.
+- **Add an Azure role to the pipeline's allowlist:** when `terraform/` assigns a new role, add it to `assignable_role_names` in `bootstrap/terraform/variables.tf` and re-apply the bootstrap first.
+
+## Troubleshooting
+
+- **First plan fails with `Error loading state: failed to lock azure state`.** The environment's empty state was never created. Run the one-time `terraform init` from [First-time setup](#first-time-setup-per-subscription-then-per-environment) step 6.
+- **Plan fails with `AuthorizationFailed` on a `.../action`.** A resource type you started using calls a POST list action during refresh, which the plan identity's `*/read` doesn't cover. Add the action to `azurerm_role_definition.plan_reader` in `bootstrap/terraform/rbac.tf` and re-apply the bootstrap.
+- **A run stops at "needs permission".** The pipeline isn't authorized for a service connection or Environment. Set `infra_pipeline_name` in the bootstrap tfvars and re-apply.
+- **A qa or prod run fails because a service connection is disabled.** Azure DevOps may automatically disable connections unused for 100 days ([Connect to Azure](https://learn.microsoft.com/azure/devops/pipelines/library/connect-to-azure?view=azure-devops)). Re-enable it in **Project settings → Service connections**, or run the pipeline regularly.
+- **Legacy Azure DevOps OIDC issuer.** It retires on July 1, 2027. The bootstrap reads each federated credential's issuer and subject from the Azure DevOps service connection, so if you convert a connection to the Microsoft Entra issuer, re-applying the bootstrap updates the credential ([Manually set an ARM WIF service connection](https://learn.microsoft.com/azure/devops/pipelines/release/configure-workload-identity)).
+- **Optional defense in depth.** Azure DevOps can require a team member's comment before PR builds from same-repo branches run ([Sprint 275](https://learn.microsoft.com/azure/devops/release-notes/2026/pipelines/sprint-275-update#features)). The plan/apply split already keeps those builds read-only.
 
 ## Application integration
 
