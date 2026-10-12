@@ -4,8 +4,8 @@ location        = "eastus2"
 azure_devops_org_url = "https://dev.azure.com/rodrigo-tech"
 azure_devops_project = "enterprise-gpt"
 
-# Uncomment once the pipeline exists in Azure DevOps, then apply again to pre-authorize it.
-# infra_pipeline_name = "andes-infra"
+# Set once the pipeline exists in Azure DevOps (created by hand); pre-authorizes it to use the connections and environments.
+infra_pipeline_name = "andes-infra"
 
 entra_group_owner_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
 
