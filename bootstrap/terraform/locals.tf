@@ -1,6 +1,6 @@
 locals {
   # Must match Get-TfStateStorageAccountName and Get-TfStateResourceGroupName in bootstrap/BootstrapCommon.ps1.
-  state_storage_account_name = "${var.name_prefix}sttfstate${substr(sha1(lower(var.subscription_id)), 0, 6)}"
+  state_storage_account_name = "${var.name_prefix}sttfstate"
   state_resource_group_name  = "${var.name_prefix}-rg-tfstate"
 
   tags = {

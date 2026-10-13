@@ -11,15 +11,10 @@ function Get-TfStateResourceGroupName {
 function Get-TfStateStorageAccountName {
     [CmdletBinding()]
     [OutputType([string])]
-    param(
-        [Parameter(Mandatory)][string]$NamePrefix,
-        [Parameter(Mandatory)][string]$SubscriptionId
-    )
+    param([Parameter(Mandatory)][string]$NamePrefix)
 
-    # Derived from the subscription so both bootstrap scripts and every backend.hcl agree on the name
-    # without passing it around, while staying globally unique.
-    $hash = [System.Security.Cryptography.SHA1]::HashData([System.Text.Encoding]::UTF8.GetBytes($SubscriptionId.ToLowerInvariant()))
-    "$($NamePrefix)sttfstate$([Convert]::ToHexString($hash).Substring(0, 6).ToLowerInvariant())"
+    # Storage account names are global across Azure, so a second subscription needs a different -NamePrefix.
+    "$($NamePrefix)sttfstate"
 }
 
 function Set-BootstrapAzContext {

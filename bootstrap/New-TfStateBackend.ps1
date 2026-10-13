@@ -50,7 +50,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/BootstrapCommon.ps1"
 
 $resourceGroupName = Get-TfStateResourceGroupName -NamePrefix $NamePrefix
-$storageAccountName = Get-TfStateStorageAccountName -NamePrefix $NamePrefix -SubscriptionId $SubscriptionId
+$storageAccountName = Get-TfStateStorageAccountName -NamePrefix $NamePrefix
 $bootstrapContainerName = 'tfstate-bootstrap'
 $tags = @{ company = $NamePrefix; purpose = 'terraform-state'; 'managed-by' = 'bootstrap' }
 

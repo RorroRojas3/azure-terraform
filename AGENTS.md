@@ -67,7 +67,7 @@ After changing provider versions, run `terraform providers lock -platform=linux_
 
 ## Conventions
 
-- Name every resource `andes-<type>-<env>[-<sfx>]`; storage accounts drop the dashes (`andesst<env><sfx>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere.
+- Name every resource `andes-<type>-<env>`; storage accounts drop the dashes (`andesst<env>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere. Web app, Key Vault, Storage, SQL and Cosmos DB names are global, so check they're free before adding an environment.
 - No secrets anywhere: data services use managed identity and Entra RBAC. Keep shared keys, Cosmos DB keys and SQL authentication disabled.
 - Every Azure RBAC role `terraform/` assigns must be in `assignable_role_names` in `bootstrap/terraform/variables.tf`. That list is enforced by an ABAC condition on each apply identity.
 - PR and plan stages use the read-only `<prefix>-sc-<env>-plan` connection; only apply and the SQL grant use `<prefix>-sc-<env>-apply`, which carries the branch control, exclusive lock and approval checks. Never point a plan step at the apply connection.
