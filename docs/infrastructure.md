@@ -17,6 +17,8 @@ Terraform for the Andes application environments, run by an Azure DevOps pipelin
 
 `<sfx>` is a 4-character hash of the resource group ID that keeps globally unique names unique.
 
+Dev runs in Central US (`location` in its `terraform.tfvars`). The Terraform state account and each environment's resource group metadata stay in East US 2, because resources can live in a different region from their resource group. See [Apply fails with a quota or ProvisioningDisabled error](#troubleshooting) for why.
+
 The environments themselves (resource group, state container, pipeline identities, service connections, SQL admin group) are created by a second Terraform module, `bootstrap/terraform/`, which an administrator runs. The pipeline never runs it.
 
 ## Security model
@@ -214,6 +216,19 @@ Windows App Service workers on B1, S1 and P1 use `10.10.0.0/19` and `10.11.0.0/1
 
 - **First plan fails with `Error loading state: failed to lock azure state`.** The environment's empty state was never created. Run the one-time `terraform init` from [First-time setup](#first-time-setup-per-subscription-then-per-environment) step 6.
 - **Plan fails with `AuthorizationFailed` on a `.../action`.** A resource type you started using calls a POST list action during refresh, which the plan identity's `*/read` doesn't cover. Add the action to `azurerm_role_definition.plan_reader` in `bootstrap/terraform/rbac.tf` and re-apply the bootstrap.
+- **Apply fails with a quota or ProvisioningDisabled error.** For example, the App Service plan fails with `Operation cannot be completed without additional quota ... Current Limit (B1 VMs): 0`, or the SQL server fails with `ProvisioningDisabled: Provisioning is restricted in this region`. These are per-subscription, per-region restrictions, not code problems (dev's first apply in East US 2 hit both, so dev moved to Central US). Either open a support request with issue type **Service and subscription limits** (for SQL, choose region access), or move the environment to a region with capacity.
+  - **Check SQL before choosing a region.** `Available` means open; `Visible` with a "Provisioning is restricted" reason means closed.
+
+    ```powershell
+    az rest --method get --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Sql/locations/<region>/capabilities?api-version=2021-11-01" --query "{status:status, reason:reason}"
+    ```
+
+  - **Check App Service quota.** The quickest test is to create and immediately delete a throwaway plan with the same SKU: `az appservice plan create ... --sku B1 -l <region>`, then `az appservice plan delete ... --yes`. The **Quotas** page in the portal also shows it.
+  - **Move an environment that isn't in use yet.** The resource group stays where it is: `location` in `bootstrap/terraform/terraform.tfvars` only sets the group's metadata location, and changing it replaces the group, which `prevent_destroy` blocks.
+    1. Change `location` in the environment's `terraform.tfvars`.
+    2. An administrator destroys what exists, locally: `terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars`.
+    3. Free the soft-deleted names. Purge the Key Vault with `az keyvault purge --name <vault> --location <old region>` (only possible while purge protection is off, as in dev). Permanently delete the Log Analytics workspace with `az monitor log-analytics workspace recover ...`, then `az monitor log-analytics workspace delete ... --force true --yes`.
+    4. Re-apply. If you skip step 3, the apply fails because the soft-deleted resources still reserve those names.
 - **A run stops at "needs permission".** The pipeline isn't authorized for a service connection or Environment. Set `infra_pipeline_name` in the bootstrap tfvars and re-apply.
 - **A qa or prod run fails because a service connection is disabled.** Azure DevOps may automatically disable connections unused for 100 days ([Connect to Azure](https://learn.microsoft.com/azure/devops/pipelines/library/connect-to-azure?view=azure-devops)). Re-enable it in **Project settings → Service connections**, or run the pipeline regularly.
 - **Legacy Azure DevOps OIDC issuer.** It retires on July 1, 2027. The bootstrap reads each federated credential's issuer and subject from the Azure DevOps service connection, so if you convert a connection to the Microsoft Entra issuer, re-applying the bootstrap updates the credential ([Manually set an ARM WIF service connection](https://learn.microsoft.com/azure/devops/pipelines/release/configure-workload-identity)).

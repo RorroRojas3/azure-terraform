@@ -1,6 +1,7 @@
 subscription_id = "290386d7-b5ac-433a-8c4c-db95cc6c36b4"
-location        = "eastus2"
-environment     = "dev"
+# East US 2 refuses new Azure SQL servers and has no App Service Basic quota for this subscription.
+location    = "centralus"
+environment = "dev"
 
 allowed_ip_addresses = ["136.55.198.208"]
 
