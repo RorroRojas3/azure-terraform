@@ -4,18 +4,18 @@ Terraform for the Andes application environments, run by an Azure DevOps pipelin
 
 | Component | Resource | Notes |
 | --- | --- | --- |
-| .NET 10 API | Windows web app `andes-api-<env>-<sfx>` | .NET 10 on a 64-bit worker, user-assigned identity, outbound VNet integration, health check `/health` |
-| Angular 22 UI | Windows web app `andes-ui-<env>-<sfx>` | Static build served by IIS (needs `web.config`, see [Application integration](#application-integration)) |
+| .NET 10 API | Windows web app `andes-api-<env>` | .NET 10 on a 64-bit worker, user-assigned identity, outbound VNet integration, health check `/health` |
+| Angular 22 UI | Windows web app `andes-ui-<env>` | Static build served by IIS (needs `web.config`, see [Application integration](#application-integration)) |
 | Hosting plan | `andes-asp-<env>` | Windows, B1 in dev, shared by both apps |
 | API identity | `andes-id-api-<env>` | The only credential the API uses: no keys, passwords or connection-string secrets |
-| Secrets | Key Vault `andes-kv-<env>-<sfx>` | RBAC mode, for third-party secrets you add |
-| Relational data | Azure SQL `andes-sql-<env>-<sfx>` / `andes-sqldb-<env>` | Basic tier in dev; Entra-only authentication |
-| Documents | Cosmos DB `andes-cosmos-<env>-<sfx>` | NoSQL API, serverless in dev, keys disabled |
-| Files | Storage `andesst<env><sfx>` | Geo-redundant (GRS), shared keys disabled |
+| Secrets | Key Vault `andes-kv-<env>` | RBAC mode, for third-party secrets you add |
+| Relational data | Azure SQL `andes-sql-<env>` / `andes-sqldb-<env>` | Basic tier in dev; Entra-only authentication |
+| Documents | Cosmos DB `andes-cosmos-<env>` | NoSQL API, serverless in dev, keys disabled |
+| Files | Storage `andesst<env>` | Geo-redundant (GRS), shared keys disabled |
 | Telemetry | Application Insights `andes-appi-<env>` + Log Analytics `andes-log-<env>` | One instance shared by the API and the UI |
 | Network | `andes-vnet-<env>` / `andes-snet-api-<env>` | Outbound path from the API to the data services only |
 
-`<sfx>` is a 4-character hash of the resource group ID that keeps globally unique names unique.
+The web app, Key Vault, SQL, Cosmos DB and Storage names are globally unique across Azure, so they must be free before you add an environment (see [Adding an environment](#adding-an-environment-qa-uat-staging-prod)).
 
 Dev runs in Central US (`location` in its `terraform.tfvars`). The Terraform state account and each environment's resource group metadata stay in East US 2, because resources can live in a different region from their resource group. See [Apply fails with a quota or ProvisioningDisabled error](#troubleshooting) for why.
 
@@ -82,7 +82,7 @@ The template takes `environment`, `planServiceConnectionId`, `applyServiceConnec
 
    Find your object ID with `az ad signed-in-user show --query id -o tsv`.
 
-   This creates `andes-rg-tfstate` (with a delete lock) and `andessttfstate<hash>`. The account is geo-redundant (RA-GRS), uses Entra auth only, and has versioning and 30-day soft delete. It also creates the `tfstate-bootstrap` container for the bootstrap module's own state. Only `-BootstrapAdminObjectIds` get Storage Blob Data Contributor on it. The script prints the account name.
+   This creates `andes-rg-tfstate` (with a delete lock) and `andessttfstate`. The account is geo-redundant (RA-GRS), uses Entra auth only, and has versioning and 30-day soft delete. It also creates the `tfstate-bootstrap` container for the bootstrap module's own state. Only `-BootstrapAdminObjectIds` get Storage Blob Data Contributor on it. The script prints the account name.
 
 3. **Fill in `bootstrap/terraform/terraform.tfvars`:**
    - `azure_devops_org_url` (`https://dev.azure.com/<organization>`) and `azure_devops_project`.
@@ -129,7 +129,31 @@ The template takes `environment`, `planServiceConnectionId`, `applyServiceConnec
 
 ## Adding an environment (qa, uat, staging, prod)
 
-1. **Add an entry** to `environments` in `bootstrap/terraform/terraform.tfvars`:
+Resource names are fixed (`andes-<type>-<env>`), so the same environment always gets the same names. The cost is that web app, Key Vault, Storage, SQL server and Cosmos DB names are unique across all of Azure, and someone else (or a soft-deleted resource) may already hold one.
+
+1. **Check the global names are free.** Run each check for the new `<env>`; every name must come back available:
+
+   ```powershell
+   # Web apps: repeat with andes-ui-<env>
+   az rest --method post --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Web/checkNameAvailability?api-version=2023-12-01" --body '{"name":"andes-api-<env>","type":"Microsoft.Web/sites"}'
+
+   # Key Vault
+   az rest --method post --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.KeyVault/checkNameAvailability?api-version=2023-07-01" --body '{"name":"andes-kv-<env>","type":"Microsoft.KeyVault/vaults"}'
+
+   # SQL server
+   az rest --method post --url "https://management.azure.com/subscriptions/<subscription-id>/providers/Microsoft.Sql/checkNameAvailability?api-version=2023-08-01" --body '{"name":"andes-sql-<env>","type":"Microsoft.Sql/servers"}'
+
+   # Storage account
+   az storage account check-name --name andesst<env>
+
+   # Cosmos DB (prints true when the name is taken)
+   az cosmosdb check-name-exists --name andes-cosmos-<env>
+   ```
+
+   The REST checks return `nameAvailable` (or `available`); `false` includes a reason. A Key Vault name held by a soft-deleted vault also shows as taken: purge it, or pick another name.
+
+   The last full check found every name free for dev, qa, uat, staging and prod except the Key Vault `andes-kv-uat`, which another tenant or a soft-deleted vault already holds. uat needs a different vault name when you add it.
+2. **Add an entry** to `environments` in `bootstrap/terraform/terraform.tfvars`:
 
    | Field | Meaning |
    | --- | --- |
@@ -139,16 +163,16 @@ The template takes `environment`, `planServiceConnectionId`, `applyServiceConnec
    | `requester_can_approve` | Let whoever triggered the run approve it; needed when one person both merges and approves |
 
    Environment names are 2-7 lowercase letters.
-2. **Apply the bootstrap** (`terraform -chdir=bootstrap/terraform apply`) and read the new outputs.
-3. **Copy** `terraform/environments/dev/` to `terraform/environments/<env>/`. In the copy:
+3. **Apply the bootstrap** (`terraform -chdir=bootstrap/terraform apply`) and read the new outputs.
+4. **Copy** `terraform/environments/dev/` to `terraform/environments/<env>/`. In the copy:
    - Change `container_name` in `backend.hcl` to `tfstate-<env>`.
    - In `terraform.tfvars`, set `environment` and `sql_admin_group_object_id`.
    - Set `vnet_address_space` from the [address plan](#address-plan).
    - Choose sizing.
    - Set `developer_principal_ids = []`.
    - Set `allowed_ip_addresses`, for example `["203.0.113.10"]`. Use `[]` for no IPs (fine for prod).
-4. **Create the empty state:** `terraform -chdir=terraform init -backend-config=environments/<env>/backend.hcl`, run by someone in `state_contributor_object_ids`.
-5. **Add the template call** in `pipelines/infra-pipeline.yml` with both connection IDs from `service_connection_ids` and `dependsOn: [apply_<previous env>]`:
+5. **Create the empty state:** `terraform -chdir=terraform init -backend-config=environments/<env>/backend.hcl`, run by someone in `state_contributor_object_ids`.
+6. **Add the template call** in `pipelines/infra-pipeline.yml` with both connection IDs from `service_connection_ids` and `dependsOn: [apply_<previous env>]`:
 
    ```yaml
    - template: templates/terraform-environment.yml
@@ -179,7 +203,6 @@ Windows App Service workers on B1, S1 and P1 use `10.10.0.0/19` and `10.11.0.0/1
 - **Key Vault:** `key_vault_purge_protection_enabled = true`, `key_vault_soft_delete_retention_days = 90` (these are the defaults).
 - **SQL:** S0 or higher (or General Purpose); `sql_backup_storage_redundancy = "Geo"` (the default).
 - **Cosmos DB:** decide between serverless and autoscale (`cosmos_serverless = false`, `cosmos_autoscale_max_throughput`). Switching capacity mode may require recreating the account, so decide before data lands.
-- **Name suffix:** decide whether the 4-character `<sfx>` is long enough before prod. Changing it later recreates resources.
 - **Approvals:** set `approver_emails` (and `requester_can_approve` if one person merges and approves) for qa and prod in `bootstrap/terraform/terraform.tfvars`, then re-apply the bootstrap.
 - **Admin hardening:**
   - The administrator adds a `CanNotDelete` lock on `andes-rg-prod`. The pipeline identities can't manage locks.
