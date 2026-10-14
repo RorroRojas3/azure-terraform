@@ -42,8 +42,10 @@ resource "azurerm_windows_web_app" "api" {
       dotnet_version = "v10.0"
     }
 
+    # Built from the name rather than azurerm_windows_web_app.ui.default_hostname: that value is unknown until the
+    # UI app exists, and azurerm 5.9 then fails the apply with "inconsistent final plan" on this block.
     cors {
-      allowed_origins = concat(["https://${azurerm_windows_web_app.ui.default_hostname}"], var.api_cors_allowed_origins)
+      allowed_origins = concat(["https://${local.names.ui_app}.azurewebsites.net"], var.api_cors_allowed_origins)
     }
   }
 
