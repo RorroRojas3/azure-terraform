@@ -44,8 +44,8 @@ stages:
     parameters:
       environment: dev
       # Printed by bootstrap/terraform (output service_connection_ids); not secrets.
-      planServiceConnectionId: ca581398-1154-42ef-bb72-f2b5212eb8ca
-      applyServiceConnectionId: cb22795a-94a1-4961-a0cc-2529630d3cc6
+      planServiceConnectionId: eac72fef-fa08-4c5d-ae3e-a9efe5c52889
+      applyServiceConnectionId: 304284d3-c8e6-4aa5-8a16-aeafadcda168
 
   # Promote to the next environment after dev is applied, e.g.:
   # - template: templates/terraform-environment.yml
