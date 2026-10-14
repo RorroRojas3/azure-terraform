@@ -252,6 +252,29 @@ Windows App Service workers on B1, S1 and P1 use `10.10.0.0/19` and `10.11.0.0/1
     2. An administrator destroys what exists, locally: `terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars`.
     3. Free the soft-deleted names. Purge the Key Vault with `az keyvault purge --name <vault> --location <old region>` (only possible while purge protection is off, as in dev). Permanently delete the Log Analytics workspace with `az monitor log-analytics workspace recover ...`, then `az monitor log-analytics workspace delete ... --force true --yes`.
     4. Re-apply. If you skip step 3, the apply fails because the soft-deleted resources still reserve those names.
+- **Rebuilding an environment after deleting it outside Terraform.** Deleting the resource group with `az group delete` leaves behind things Terraform's state no longer knows about. Dev hit this once, and the next apply failed on `azurerm_monitor_diagnostic_setting.key_vault` with `a resource with the ID ".../vaults/andes-kv-dev|to-log-analytics" already exists - to be managed via Terraform this resource needs to be imported into the State`. Azure keeps a deleted resource's diagnostic settings and reattaches them when a resource with the same ID is recreated. Two more leftovers: the deleted Key Vault stays soft-deleted and reserves its name, and a soft-deleted Log Analytics workspace is recovered automatically when you recreate it with the same name, resource group and region.
+  - **Prefer `terraform destroy`.** An administrator with state access runs `terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars`, which removes diagnostic settings properly. The resource group and role assignments owned by `bootstrap/terraform` aren't affected.
+  - **If the group is already gone, purge the vault before the next run.** This works only while purge protection is off, as in dev:
+
+    ```powershell
+    az keyvault purge --name andes-kv-<env> --location <region>
+    ```
+
+  - **If the apply still fails on the diagnostic setting, import it instead of deleting it,** then re-run the pipeline. In Git Bash on Windows, prefix the command with `MSYS_NO_PATHCONV=1` so the path isn't rewritten.
+
+    ```powershell
+    terraform -chdir=terraform import -var-file=environments/<env>/terraform.tfvars azurerm_monitor_diagnostic_setting.key_vault "/subscriptions/<subscription-id>/resourceGroups/andes-rg-<env>/providers/Microsoft.KeyVault/vaults/andes-kv-<env>|to-log-analytics"
+    ```
+
+- **The SQL grant didn't run after a failed apply.** The `grant` job runs inside the apply stage, and the apply stage runs only when the plan has changes. If an apply fails after the database was created, fixing the cause usually leaves a no-change plan, so the next run skips the grant and the API identity has no database user. **Rerun failed jobs** doesn't help either, because the saved plan is stale. A member of the SQL admin group runs the script locally, from a machine whose IP is in `allowed_ip_addresses`. It needs the `Az.Accounts`, `Az.Sql` and `SqlServer` PowerShell modules (`Install-PSResource -Name Az.Sql, SqlServer -Scope CurrentUser`).
+
+  ```powershell
+  terraform -chdir=terraform output -json sql_access   # values for the parameters below
+  ./scripts/Grant-SqlManagedIdentityAccess.ps1 -ResourceGroupName andes-rg-<env> -SqlServerName andes-sql-<env> `
+      -DatabaseName andes-sqldb-<env> -PrincipalName andes-id-api-<env> -PrincipalClientId <principal_client_id>
+  ```
+
+  Expected output: `Database user andes-id-api-<env> has roles: db_datareader, db_datawriter.` The script is idempotent, so running it when the user already exists is harmless.
 - **A run stops at "needs permission".** The pipeline isn't authorized for a service connection or Environment. Set `infra_pipeline_name` in the bootstrap tfvars and re-apply.
 - **A qa or prod run fails because a service connection is disabled.** Azure DevOps may automatically disable connections unused for 100 days ([Connect to Azure](https://learn.microsoft.com/azure/devops/pipelines/library/connect-to-azure?view=azure-devops)). Re-enable it in **Project settings → Service connections**, or run the pipeline regularly.
 - **Legacy Azure DevOps OIDC issuer.** It retires on July 1, 2027. The bootstrap reads each federated credential's issuer and subject from the Azure DevOps service connection, so if you convert a connection to the Microsoft Entra issuer, re-applying the bootstrap updates the credential ([Manually set an ARM WIF service connection](https://learn.microsoft.com/azure/devops/pipelines/release/configure-workload-identity)).
