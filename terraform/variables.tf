@@ -11,11 +11,11 @@ variable "location" {
 variable "name_prefix" {
   description = "Company prefix that starts every resource name."
   type        = string
-  default     = "andes"
+  default     = "andes-softsol"
 
   validation {
-    condition     = can(regex("^[a-z0-9]{2,8}$", var.name_prefix))
-    error_message = "name_prefix must be 2-8 lowercase letters or digits so Key Vault and Storage names stay within 24 characters."
+    condition     = can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.name_prefix)) && length(var.name_prefix) >= 2 && length(var.name_prefix) <= 13
+    error_message = "name_prefix must be 2-13 lowercase letters, digits or single dashes so Key Vault and Storage names stay within 24 characters."
   }
 }
 

@@ -8,7 +8,7 @@ parameters:
     type: string
   - name: namePrefix
     type: string
-    default: andes
+    default: andes-softsol
   - name: dependsOn
     type: object
     default: []

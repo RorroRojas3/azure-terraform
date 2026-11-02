@@ -15,7 +15,14 @@ All notable changes to this project are documented here. The format follows [Kee
   - `New-TfStateBackend.ps1` creates the geo-redundant Terraform state backend and an admin-only container for the bootstrap's own state.
   - The `bootstrap/terraform` module creates each environment from one `environments` entry: resource group, state container, a read-only plan identity and a write-capable apply identity (each scoped to that environment), Azure DevOps service connections with their federated credentials, the apply connection's checks (main-only branch control, exclusive lock, optional approval), the Azure DevOps Environment and the SQL admin group. One `terraform apply` does it all, signed in with `az login` and no secrets.
 - An Azure DevOps pipeline that plans on pull requests with the read-only identity. Applies run on `main` only, through a lockable, approvable apply service connection, and then grant the API identity SQL access. It authenticates with workload identity federation.
+- Four more environments, qa, uat, staging and prod, all in Central US with dev's sizing. The pipeline promotes a merge through dev, qa, uat, staging and prod in order: dev applies automatically, and each later environment waits for approval on its apply service connection.
 - Infrastructure guide: setup, adding environments, and a production checklist (`docs/infrastructure.md`).
+
+### Changed
+
+- The first-time setup guide now shows who creates what and covers the steps that were easy to miss.
+- Resources are now named with the `andes-softsol` company prefix (for example `andes-softsol-kv-dev`, `andessoftsolst<env>`, `andes-softsol-sc-<env>-apply`). Nothing was migrated; every environment was rebuilt from scratch. `name_prefix` now accepts 2-13 lowercase letters, digits or single dashes so Key Vault names fit 24 characters.
+- The infrastructure pipeline no longer batches CI runs. A run waiting at an approval still counts as running, so batching would have held every later merge back from dev.
 
 ### Security
 

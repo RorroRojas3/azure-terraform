@@ -17,8 +17,8 @@
     always removes the rule afterwards. Use it on Microsoft-hosted agents, whose IPs are not allowlisted.
 
 .EXAMPLE
-    ./scripts/Grant-SqlManagedIdentityAccess.ps1 -ResourceGroupName andes-rg-dev -SqlServerName andes-sql-dev-1a2b `
-        -DatabaseName andes-sqldb-dev -PrincipalName andes-id-api-dev -PrincipalClientId 00000000-0000-0000-0000-000000000000
+    ./scripts/Grant-SqlManagedIdentityAccess.ps1 -ResourceGroupName andes-softsol-rg-dev -SqlServerName andes-softsol-sql-dev `
+        -DatabaseName andes-softsol-sqldb-dev -PrincipalName andes-softsol-id-api-dev -PrincipalClientId 00000000-0000-0000-0000-000000000000
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(

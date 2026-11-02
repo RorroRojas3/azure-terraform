@@ -9,15 +9,39 @@ infra_pipeline_name = "andes-infra"
 
 entra_group_owner_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
 
+# approver_emails must match the Azure DevOps principal name exactly. requester_can_approve stays true while one
+# person both merges and approves.
 environments = {
   dev = {
     sql_admin_member_object_ids  = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
     state_contributor_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
   }
 
-  # prod = {
-  #   sql_admin_member_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
-  #   approver_emails             = ["rorro.irg@gmail.com"]
-  #   requester_can_approve       = true
-  # }
+  qa = {
+    sql_admin_member_object_ids  = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    state_contributor_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    approver_emails              = ["Rorro.irg@gmail.com"]
+    requester_can_approve        = true
+  }
+
+  uat = {
+    sql_admin_member_object_ids  = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    state_contributor_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    approver_emails              = ["Rorro.irg@gmail.com"]
+    requester_can_approve        = true
+  }
+
+  staging = {
+    sql_admin_member_object_ids  = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    state_contributor_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    approver_emails              = ["Rorro.irg@gmail.com"]
+    requester_can_approve        = true
+  }
+
+  prod = {
+    sql_admin_member_object_ids  = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    state_contributor_object_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
+    approver_emails              = ["Rorro.irg@gmail.com"]
+    requester_can_approve        = true
+  }
 }
