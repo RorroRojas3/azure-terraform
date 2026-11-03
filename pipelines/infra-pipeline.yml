@@ -17,16 +17,12 @@ trigger:
       - scripts
 
 # Honoured for GitHub/Bitbucket repos only; with Azure Repos, add this pipeline as a build validation
-# branch policy on main instead.
+# branch policy on main instead. No path filter: main's branch protection requires this run's check, and a PR
+# the trigger skipped could never report it.
 pr:
   branches:
     include:
       - main
-  paths:
-    include:
-      - terraform
-      - pipelines
-      - scripts
 
 pool:
   vmImage: ubuntu-24.04

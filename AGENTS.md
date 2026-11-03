@@ -42,7 +42,7 @@ After changing code, run the matching reviewer on the diff: `andes-csharp-code-r
 
 ## About this repository
 
-Terraform and Azure DevOps pipelines for the Andes application environments (dev, qa, uat, staging and prod). It holds infrastructure only; application code and app deployment pipelines live elsewhere. Architecture and runbooks: `docs/infrastructure.md`.
+Terraform and Azure DevOps pipelines for the Andes application environments (dev, qa, uat, staging and prod). It holds infrastructure only; application code and app deployment pipelines live elsewhere. Start at `README.md`; architecture, setup, pipeline, operations and app integration guides live in `docs/`.
 
 ## Layout
 
