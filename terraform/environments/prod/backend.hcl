@@ -1,0 +1,6 @@
+# Created by bootstrap/New-TfStateBackend.ps1 (account) and bootstrap/terraform (container).
+# The pipeline adds OIDC settings through ARM_* environment variables; locally, Azure CLI credentials are used.
+storage_account_name = "andessoftsolsttfstate"
+container_name       = "tfstate-prod"
+key                  = "infra.tfstate"
+use_azuread_auth     = true

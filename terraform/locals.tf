@@ -1,6 +1,6 @@
 locals {
   # Web app, Key Vault, Storage, SQL server and Cosmos DB names are globally unique across Azure; check a new
-  # environment's names are free before adding it (andes-kv-uat, for one, is already taken).
+  # environment's names are free before adding it.
   names = {
     log_analytics   = "${var.name_prefix}-log-${var.environment}"
     app_insights    = "${var.name_prefix}-appi-${var.environment}"
@@ -11,7 +11,7 @@ locals {
     api_app         = "${var.name_prefix}-api-${var.environment}"
     ui_app          = "${var.name_prefix}-ui-${var.environment}"
     key_vault       = "${var.name_prefix}-kv-${var.environment}"
-    storage_account = "${var.name_prefix}st${var.environment}"
+    storage_account = "${replace(var.name_prefix, "-", "")}st${var.environment}"
     sql_server      = "${var.name_prefix}-sql-${var.environment}"
     sql_database    = "${var.name_prefix}-sqldb-${var.environment}"
     cosmos_account  = "${var.name_prefix}-cosmos-${var.environment}"

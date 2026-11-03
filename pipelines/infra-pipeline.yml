@@ -5,7 +5,8 @@
 name: infra-$(Date:yyyyMMdd)$(Rev:.r)
 
 trigger:
-  batch: true
+  # Not batched: a run waiting on an approval counts as running, so batching would hold every later merge back from dev.
+  batch: false
   branches:
     include:
       - main
@@ -44,13 +45,34 @@ stages:
     parameters:
       environment: dev
       # Printed by bootstrap/terraform (output service_connection_ids); not secrets.
-      planServiceConnectionId: eac72fef-fa08-4c5d-ae3e-a9efe5c52889
-      applyServiceConnectionId: 304284d3-c8e6-4aa5-8a16-aeafadcda168
+      planServiceConnectionId: 53f1a67e-3355-46c2-a6e7-9e76ecafdf18
+      applyServiceConnectionId: 1da5b51f-af1f-4cbd-8560-d8215c820a30
 
-  # Promote to the next environment after dev is applied, e.g.:
-  # - template: templates/terraform-environment.yml
-  #   parameters:
-  #     environment: qa
-  #     planServiceConnectionId: 00000000-0000-0000-0000-000000000000
-  #     applyServiceConnectionId: 00000000-0000-0000-0000-000000000000
-  #     dependsOn: [apply_dev]
+  # Each environment after dev waits for the approval check on its apply service connection.
+  - template: templates/terraform-environment.yml
+    parameters:
+      environment: qa
+      planServiceConnectionId: 85914c19-42ba-41bc-a286-b78eafb22941
+      applyServiceConnectionId: c37f856b-f3bb-4610-a9c3-0d7557ecf821
+      dependsOn: [apply_dev]
+
+  - template: templates/terraform-environment.yml
+    parameters:
+      environment: uat
+      planServiceConnectionId: 0fac6d8d-1c29-441c-904c-235fb632b61d
+      applyServiceConnectionId: 1a10a10a-66ad-4a16-bc89-ff711bb340e1
+      dependsOn: [apply_qa]
+
+  - template: templates/terraform-environment.yml
+    parameters:
+      environment: staging
+      planServiceConnectionId: 8b6900e0-d219-435b-b60a-bb8b8417838b
+      applyServiceConnectionId: 338afdc2-c9aa-4f3b-82a6-1861b9799671
+      dependsOn: [apply_uat]
+
+  - template: templates/terraform-environment.yml
+    parameters:
+      environment: prod
+      planServiceConnectionId: f450303e-2bda-4b4a-8d8a-6f4114f51519
+      applyServiceConnectionId: 74a309c5-06c3-4224-909e-2f5e7a4adb33
+      dependsOn: [apply_staging]

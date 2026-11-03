@@ -42,7 +42,7 @@ After changing code, run the matching reviewer on the diff: `andes-csharp-code-r
 
 ## About this repository
 
-Terraform and Azure DevOps pipelines for the Andes application environments (dev now; qa/uat/staging/prod later). It holds infrastructure only; application code and app deployment pipelines live elsewhere. Architecture and runbooks: `docs/infrastructure.md`.
+Terraform and Azure DevOps pipelines for the Andes application environments (dev, qa, uat, staging and prod). It holds infrastructure only; application code and app deployment pipelines live elsewhere. Architecture and runbooks: `docs/infrastructure.md`.
 
 ## Layout
 
@@ -67,10 +67,10 @@ After changing provider versions, run `terraform providers lock -platform=linux_
 
 ## Conventions
 
-- Name every resource `andes-<type>-<env>`; storage accounts drop the dashes (`andesst<env>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere. Web app, Key Vault, Storage, SQL and Cosmos DB names are global, so check they're free before adding an environment.
+- Name every resource `andes-softsol-<type>-<env>`; storage accounts drop the dashes (`andessoftsolst<env>`). Names come from `local.names` in `terraform/locals.tf`; don't hard-code them elsewhere. Web app, Key Vault, Storage, SQL and Cosmos DB names are global, so check they're free before adding an environment. `name_prefix` stays within 13 characters and environment names within 7, or Key Vault names pass Azure's 24-character limit.
 - No secrets anywhere: data services use managed identity and Entra RBAC. Keep shared keys, Cosmos DB keys and SQL authentication disabled.
 - Every Azure RBAC role `terraform/` assigns must be in `assignable_role_names` in `bootstrap/terraform/variables.tf`. That list is enforced by an ABAC condition on each apply identity.
-- PR and plan stages use the read-only `<prefix>-sc-<env>-plan` connection; only apply and the SQL grant use `<prefix>-sc-<env>-apply`, which carries the branch control, exclusive lock and approval checks. Never point a plan step at the apply connection.
+- PR and plan stages use the read-only `<prefix>-sc-<env>-plan` connection; only apply and the SQL grant use `<prefix>-sc-<env>-apply`, which carries the branch control, exclusive lock and approval checks. Never point a plan step at the apply connection. Approvals come from `approver_emails` in the bootstrap tfvars: dev has none and applies automatically; qa through prod wait for one.
 - If `terraform/` starts using a resource whose refresh calls a POST list action, add that action to `azurerm_role_definition.plan_reader` in `bootstrap/terraform/rbac.tf`, or plans fail with AuthorizationFailed.
 - Add environments through an `environments` entry in `bootstrap/terraform/terraform.tfvars`, a `terraform/environments/<env>/` folder and a pipeline template call, not by forking Terraform code.
 - Never commit `docs/plans/` or `*.tfvars` other than `terraform/environments/*/terraform.tfvars` and `bootstrap/terraform/terraform.tfvars`, which must stay secret-free.

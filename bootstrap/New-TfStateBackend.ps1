@@ -32,8 +32,8 @@ param(
     [Parameter(Mandatory)]
     [string]$Location,
 
-    [ValidatePattern('^[a-z0-9]{2,8}$')]
-    [string]$NamePrefix = 'andes',
+    [ValidatePattern('^(?=.{2,13}$)[a-z0-9]+(-[a-z0-9]+)*$')]
+    [string]$NamePrefix = 'andes-softsol',
 
     [ValidateSet('Standard_RAGRS', 'Standard_GRS', 'Standard_RAGZRS', 'Standard_GZRS')]
     [string]$SkuName = 'Standard_RAGRS',

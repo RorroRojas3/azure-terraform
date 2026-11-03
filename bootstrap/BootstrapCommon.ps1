@@ -14,7 +14,7 @@ function Get-TfStateStorageAccountName {
     param([Parameter(Mandatory)][string]$NamePrefix)
 
     # Storage account names are global across Azure, so a second subscription needs a different -NamePrefix.
-    "$($NamePrefix)sttfstate"
+    "$($NamePrefix -replace '-', '')sttfstate"
 }
 
 function Set-BootstrapAzContext {
