@@ -62,8 +62,8 @@ stages:
                 eq(variables['Build.SourceBranch'], 'refs/heads/main')
               )
 
-  # Approval, main-only branch control and the exclusive lock sit on the apply service connection, where pipeline
-  # YAML can't bypass them. Checks run once per stage, so the grant job shares the apply job's approval.
+  # Main-only branch control and the exclusive lock sit on the apply service connection, where pipeline YAML can't
+  # bypass them. Checks run once per stage, so the grant job shares the apply job's approval.
   - stage: apply_${{ parameters.environment }}
     displayName: Apply ${{ parameters.environment }}
     dependsOn: plan_${{ parameters.environment }}
@@ -74,7 +74,7 @@ stages:
         eq(dependencies.plan_${{ parameters.environment }}.outputs['plan.tfplan.hasChanges'], 'true')
       )
     jobs:
-      # The Azure DevOps Environment only records deployment history.
+      # Approvers are set on this Azure DevOps Environment; one with none, like dev, applies automatically.
       - deployment: apply
         displayName: terraform apply
         environment: ${{ parameters.namePrefix }}-${{ parameters.environment }}

@@ -67,14 +67,10 @@ variable "environments" {
     Environments keyed by name (dev, qa, uat, staging, prod). Per environment:
     sql_admin_member_object_ids: people added to the SQL admin Entra group (the apply identity is always a member).
     state_contributor_object_ids: people who may run Terraform locally against the environment's state.
-    approver_emails: Azure DevOps users who must approve each apply; empty means no approval (fine for dev).
-    requester_can_approve: let whoever triggered the run approve it; needed when one person both merges and approves.
   EOT
   type = map(object({
     sql_admin_member_object_ids  = optional(list(string), [])
     state_contributor_object_ids = optional(list(string), [])
-    approver_emails              = optional(list(string), [])
-    requester_can_approve        = optional(bool, false)
   }))
 
   validation {

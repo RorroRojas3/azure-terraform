@@ -40,10 +40,12 @@ Each identity is used through its own Azure DevOps service connection:
 | Connection | Identity | Used by | Checks |
 | --- | --- | --- | --- |
 | `andes-softsol-sc-<env>-plan` | Plan | PR plans and `main` plans | None |
-| `andes-softsol-sc-<env>-apply` | Apply | Apply and SQL grant (`main` only) | Branch control (`refs/heads/main` only), exclusive lock, and an approval when `approver_emails` is set |
+| `andes-softsol-sc-<env>-apply` | Apply | Apply and SQL grant (`main` only) | Branch control (`refs/heads/main` only) and exclusive lock. Approvals are on the Environment, not here |
 
 - **The pipeline can't escalate.** The apply identity's *Role Based Access Control Administrator* assignment has an ABAC condition. It allows assigning or removing only the roles in `assignable_role_names` (`bootstrap/terraform/variables.tf`) and never for the environment's own plan or apply identity. So it can't grant Owner, Contributor or User Access Administrator, and it can't give itself data-plane access. See [Delegate Azure access management](https://learn.microsoft.com/azure/role-based-access-control/delegate-role-assignments-overview).
-- **PR branches can't run code with write access.** Plans use the read-only connection, which carries no checks, so PR runs aren't blocked. The checks sit on the apply connection, where pipeline YAML can't remove them ([Define approvals and checks](https://learn.microsoft.com/azure/devops/pipelines/process/approvals)). The Azure DevOps Environment `andes-softsol-<env>` has no checks and only records deployment history.
+- **PR branches can't run code with write access.** Plans use the read-only connection, which carries no checks, so PR runs aren't blocked. Branch control and the exclusive lock sit on the apply connection, where pipeline YAML can't remove them ([Define approvals and checks](https://learn.microsoft.com/azure/devops/pipelines/process/approvals)). The approvers sit on the Azure DevOps Environment `andes-softsol-<env>` instead (next two bullets), which also records deployment history.
+- **Accepted trade-off: approvals are on the Environment, not the service connection.** Microsoft's advice above is to avoid this, and the owner chose it deliberately, because approvers belong to the pipeline, not to Terraform. A YAML change merged to `main` could drop the `environment:` key from the apply job and skip the approval. Branch control still keeps PR branches away from the apply connection, so such a change has to pass PR review before it can run. Review any change to `pipelines/` with that in mind.
+- **Approvals aren't in code, so they aren't rebuilt.** Terraform creates each Environment without approvers. A new or recreated Environment has no approval until someone adds it by hand, and until then its applies run automatically, prod included. Confirm the approver after any rebuild (see [Adding an environment](#adding-an-environment-qa-uat-staging-prod) and the [production checklist](#production-checklist)).
 - **The pipeline can't touch its own identity or other environments.** Both identities live in `andes-softsol-rg-tfstate`, outside the resource group they manage, and have no rights at subscription scope.
 - **No pipeline identity can tamper with admin state.** `bootstrap/terraform` keeps its state in the `tfstate-bootstrap` container, writable only by `-BootstrapAdminObjectIds`.
 - **No secrets exist.** The pipeline signs in with workload identity federation, the admin signs in with `az login` (no personal access token), and the API uses its managed identity everywhere. Storage shared keys, Cosmos DB keys and SQL authentication are all disabled.
@@ -58,7 +60,7 @@ Each identity is used through its own Azure DevOps service connection:
 Per environment, `pipelines/infra-pipeline.yml` calls `pipelines/templates/terraform-environment.yml`:
 
 1. **`plan_<env>`** (PRs and `main`): runs `fmt -check`, `validate` and `terraform plan -lock=false` on the plan connection. The plan identity can read state but not lease it; apply still locks and Terraform rejects a stale saved plan. The plan artifact `tfplan-<env>` is published only on `main`, because saved plans hold variable values in cleartext and PR plans are never applied.
-2. **`apply_<env>`** (`main` only, and only when the plan has changes): uses the apply connection, so its checks run once for the whole stage. A stage with no changes is skipped, so it asks for no approval. Two jobs:
+2. **`apply_<env>`** (`main` only, and only when the plan has changes): uses the apply connection (branch control, exclusive lock) and targets the Environment (approvers), and both run their checks once for the whole stage. A stage with no changes is skipped, so it asks for no approval. Two jobs:
    - `apply` is a deployment job targeting the `andes-softsol-<env>` Environment. It applies the saved plan.
    - `grant` creates the API identity's SQL contained user. It's a separate job so **Rerun failed jobs** retries a failed grant without re-applying a stale plan. One approval covers both jobs.
 
@@ -68,20 +70,22 @@ The template takes `environment`, `planServiceConnectionId`, `applyServiceConnec
 
 `infra-pipeline.yml` chains the environments in order: dev, qa, uat, staging, prod. Each template call after dev sets `dependsOn: [apply_<previous>]`, so a change reaches an environment only after the one before it has applied.
 
-- **dev applies automatically.** It has no `approver_emails`, so nothing waits.
-- **qa, uat, staging and prod each wait for approval.** The approval is a check on that environment's apply service connection, set by `approver_emails` with `requester_can_approve = true` in `bootstrap/terraform/terraform.tfvars` (one person both merges and approves). There is no approval YAML, and pipeline YAML can't bypass the check.
+- **dev applies automatically.** Its Environment has no approvers, so nothing waits.
+- **qa, uat, staging and prod each wait for approval.** The approvers are set by hand in Azure DevOps, under **Pipelines → Environments → `andes-softsol-<env>` → Approvals and checks**. Terraform doesn't manage them. **Allow approvers to approve their own runs** stays on, because one person both merges and approves. There is no approval YAML: the pipeline's `deployment` job targets the Environment, and Azure DevOps holds the stage there until an approver responds. One approval covers both the `apply` and `grant` jobs.
+- **Approvals can be dropped from YAML.** A change merged to `main` that removed the `environment:` key would skip them. See the trade-off in the [Security model](#security-model).
 - **Runs aren't batched.** The CI trigger sets `batch: false`. Azure DevOps won't start a batched run until the current one completes, and a run waiting at an approval is still running, so batching would hold every later merge back from dev.
 
 For what to do when you approve a run, see [Approve a promotion](#day-to-day) under Day-to-day.
 
 ## First-time setup (per subscription, then per environment)
 
-The pipeline creates the environment's actual resources (step 8). Steps 2 to 7 set up only what the pipeline needs in order to run, and you do them by hand:
+The pipeline creates the environment's actual resources (step 9). Steps 2 to 8 set up only what the pipeline needs in order to run, and you do them by hand:
 
 | Who | Creates |
 | --- | --- |
 | You, with `New-TfStateBackend.ps1` | `andes-softsol-rg-tfstate`, `andessoftsolsttfstate`, `tfstate-bootstrap` |
-| You, with `bootstrap/terraform` | `andes-softsol-rg-<env>`, `tfstate-<env>`, plan and apply identities, service connections and checks, SQL admin group, `andes-softsol-<env>` Environment |
+| You, with `bootstrap/terraform` | `andes-softsol-rg-<env>`, `tfstate-<env>`, plan and apply identities, service connections (the apply one with branch control and the exclusive lock), SQL admin group, `andes-softsol-<env>` Environment without approvers |
+| You, in Azure DevOps | The approvers on each Environment (qa, uat, staging, prod). Terraform doesn't manage them, so a recreated Environment has none until you add them |
 | You, in Azure DevOps | The `andes-infra` pipeline definition, once per Azure DevOps project. It persists and isn't rebuilt with an environment |
 | The pipeline | Everything else in the environment (web apps, plan, SQL, Cosmos DB, Storage, Key Vault, networking, monitoring), plus the API's SQL contained user |
 
@@ -135,11 +139,11 @@ That is by design: a pipeline that could create its own identities could grant i
    - Resource group `andes-softsol-rg-<env>` and state container `tfstate-<env>` (both `prevent_destroy`).
    - Identities `andes-softsol-id-ado-<env>-plan` and `andes-softsol-id-ado-<env>-apply` in `andes-softsol-rg-tfstate`, with their role assignments.
    - Service connections `andes-softsol-sc-<env>-plan` and `andes-softsol-sc-<env>-apply`, and their federated credentials. The credential's subject embeds the connection's GUID, so Terraform reads the issuer and subject from the connection and creates the credential in the same apply.
-   - The apply connection's checks: branch control, exclusive lock and, when `approver_emails` is set, approval.
+   - The apply connection's checks: branch control and the exclusive lock. Approvals aren't created here; you add them in step 8.
    - Entra group `andes-softsol-sg-sql-admins-<env>` (the apply identity plus `sql_admin_member_object_ids`).
-   - The Azure DevOps Environment `andes-softsol-<env>`.
+   - The Azure DevOps Environment `andes-softsol-<env>`, with no approvers.
 
-5. **Wire up the repo** from the outputs (`terraform -chdir=bootstrap/terraform output`). Make these changes on a branch; it becomes the pull request in step 8. The group object ID and the connection IDs are new on every fresh build, so always copy them from the current outputs, never from an earlier build.
+5. **Wire up the repo** from the outputs (`terraform -chdir=bootstrap/terraform output`). Make these changes on a branch; it becomes the pull request in step 9. The group object ID and the connection IDs are new on every fresh build, so always copy them from the current outputs, never from an earlier build.
    - `sql_admin_group_object_ids`: set `sql_admin_group_object_id` in each environment's `terraform/environments/<env>/terraform.tfvars`.
    - `service_connection_ids`: set `planServiceConnectionId` and `applyServiceConnectionId` in `pipelines/infra-pipeline.yml`.
 
@@ -158,11 +162,13 @@ That is by design: a pipeline that could create its own identities could grant i
 
 7. **The pipeline definition (normally skip this).** You create the `andes-infra` pipeline by hand once per Azure DevOps project, and it normally already exists, so skip this step. The step 4 apply already authorized it to use both service connections and the Environment. Only if the pipeline is missing (a new Azure DevOps project, say): create it under **Pipelines → New pipeline → GitHub** with the existing file `/pipelines/infra-pipeline.yml` and the name `andes-infra`. Because `bootstrap/terraform/data.tf` looks the pipeline up by name and fails if it doesn't exist, comment out `infra_pipeline_name` in `bootstrap/terraform/terraform.tfvars` for the step 4 apply, then uncomment it and re-apply the bootstrap.
 
-8. **Run it.** This is the step that creates the environment's resources. Open a pull request from the branch in step 5 (the `pr:` trigger in `infra-pipeline.yml` starts the run; no branch policy is needed).
+8. **Add the approval before the first merge (qa, uat, staging, prod).** The bootstrap creates each Environment without approvers, and an Environment with none applies automatically. In Azure DevOps, open **Pipelines → Environments → `andes-softsol-<env>` → Approvals and checks**, add **Approvals**, choose the approvers, and leave **Allow approvers to approve their own runs** on while one person both merges and approves. Do this before the merge in step 9, or that merge applies to the environment unapproved. Skip it for dev, which applies automatically by design.
+
+9. **Run it.** This is the step that creates the environment's resources. Open a pull request from the branch in step 5 (the `pr:` trigger in `infra-pipeline.yml` starts the run; no branch policy is needed).
    - **The PR run plans only.** It runs on the plan connection, so nothing is created or changed.
    - **Merging to `main` creates the resources.** The run plans again, applies when there are changes (after approval, for every environment except dev; see [Promotion and approvals](#promotion-and-approvals)), then runs `scripts/Grant-SqlManagedIdentityAccess.ps1`. That script creates the API identity's contained database user (`CREATE USER … WITH SID … TYPE = E`, so the SQL server doesn't need the Directory Readers role) and grants `db_datareader` and `db_datawriter`.
 
-9. **Deploy the application.** This repo holds infrastructure only. Deploy the API and the UI from their own pipelines, as described in [Application integration](#application-integration).
+10. **Deploy the application.** This repo holds infrastructure only. Deploy the API and the UI from their own pipelines, as described in [Application integration](#application-integration).
 
 ## Adding an environment (qa, uat, staging, prod)
 
@@ -198,8 +204,6 @@ These steps added qa through prod; follow them for any further environment. Reso
    | --- | --- |
    | `sql_admin_member_object_ids` | People added to the SQL admin group (the apply identity is always a member) |
    | `state_contributor_object_ids` | People who may run Terraform locally against this environment's state |
-   | `approver_emails` | Azure DevOps users who must approve each apply; empty means no approval (dev only; qa through prod set it) |
-   | `requester_can_approve` | Let whoever triggered the run approve it; needed when one person both merges and approves |
 
    Environment names are 2-7 lowercase letters.
 3. **Apply the bootstrap** (`terraform -chdir=bootstrap/terraform apply`) and read the new outputs.
@@ -221,6 +225,7 @@ These steps added qa through prod; follow them for any further environment. Reso
        applyServiceConnectionId: <apply id>
        dependsOn: [apply_dev]
    ```
+7. **Add the approval before the first merge.** The bootstrap created the Environment without approvers, and Terraform never manages them. In Azure DevOps, open **Pipelines → Environments → `andes-softsol-<env>` → Approvals and checks**, add **Approvals**, and choose the approvers. Leave **Allow approvers to approve their own runs** on while one person both merges and approves. Do this before you merge the pull request from step 6: until the approval exists, the environment's apply runs automatically, prod included.
 
 No Terraform code changes are needed.
 
@@ -244,7 +249,8 @@ Prod currently matches dev and has not been hardened: B1 plan, SQL Basic with lo
 - **Key Vault:** `key_vault_purge_protection_enabled = true`, `key_vault_soft_delete_retention_days = 90` (these are the defaults).
 - **SQL:** S0 or higher (or General Purpose); `sql_backup_storage_redundancy = "Geo"` (the default).
 - **Cosmos DB:** decide between serverless and autoscale (`cosmos_serverless = false`, `cosmos_autoscale_max_throughput`). Switching capacity mode may require recreating the account, so decide before data lands.
-- **Approvals:** already configured for qa through prod (see [Promotion and approvals](#promotion-and-approvals)). When more than one person can merge, review `approver_emails` and `requester_can_approve` for prod.
+- **Approvals:** set by hand on the qa, uat, staging and prod Environments (see [Promotion and approvals](#promotion-and-approvals)). When more than one person can merge, review who may approve prod and whether **Allow approvers to approve their own runs** should stay on.
+- **Confirm prod's approver is in place.** Open **Pipelines → Environments → `andes-softsol-prod` → Approvals and checks** and check that an approver is listed. Approvals aren't in Terraform, so a recreated Environment has none, and its applies would run automatically.
 - **Admin hardening:**
   - The administrator adds a `CanNotDelete` lock on `andes-softsol-rg-prod`. The pipeline identities can't manage locks.
   - Enable Microsoft Defender for Cloud plans for SQL, Storage, Key Vault and App Service.
@@ -257,18 +263,18 @@ Prod currently matches dev and has not been hardened: B1 plan, SQL Basic with lo
   - Defender for Cloud plans enabled at subscription level cover (and bill) every environment.
   - Prod and non-prod share `andes-softsol-rg-tfstate` and the state account.
 
-  Mitigations in place: per-environment identities scoped to their own resource group and state container, approval on prod's apply connection, and the `CanNotDelete` lock on `andes-softsol-rg-prod`. Keep the subscription Owner list short.
+  Mitigations in place: per-environment identities scoped to their own resource group and state container, approval on prod's Environment, and the `CanNotDelete` lock on `andes-softsol-rg-prod`. Keep the subscription Owner list short.
 
 ## Day-to-day
 
 - **Change your IP:** edit `allowed_ip_addresses` in `terraform/environments/<env>/terraform.tfvars`, open a PR (the plan shows the firewall changes) and merge. The SQL, Key Vault, Storage and Cosmos DB firewalls follow. SQL firewall rules are keyed by address, for example `azurerm_mssql_firewall_rule.allowed["203-0-113-10_32"]` named `allow-203-0-113-10_32`, so changing an address replaces only its own rule.
 - **Add blob containers or Cosmos DB containers:** edit `storage_containers` or `cosmos_containers` in tfvars. Cosmos DB containers must be declared here, because Entra data-plane roles can't create databases or containers.
 - **Retry a failed SQL grant:** use **Rerun failed jobs** on the run. It re-runs `grant` without re-applying.
-- **Approve a promotion:** a merge applies dev, then each later environment waits for approval in turn.
+- **Approve a promotion:** a merge applies dev, then each later environment waits for its Environment's approvers in turn. A pending approval shows on the run and on **Pipelines → Environments → `andes-softsol-<env>`**.
   - **Review before you approve.** Read the plan in the `plan_<env>` logs first.
   - **Approve the newest run and cancel older pending ones.** Approving an old run after a newer one has applied fails safely, because Terraform refuses a stale saved plan. Two quick merges can make a dev apply fail the same way; re-run the pipeline.
   - **Reject a run to stop promotion.** The later environments don't plan or apply.
-  - **An unanswered approval times out after 30 days (the default).** The stage is skipped and the run moves on to the next environment's plan and approval, so reject a run you don't want promoted instead of leaving it.
+  - **An unanswered approval times out after 30 days (the Azure DevOps default timeout).** The stage is skipped and the run moves on to the next environment's plan and approval, so reject a run you don't want promoted instead of leaving it.
 - **Run Terraform locally:** you need `Storage Blob Data Contributor` on the `tfstate-<env>` container, which listing your object ID in `state_contributor_object_ids` (bootstrap tfvars) grants. Then run, with the environment you want in place of `<env>`:
 
   ```powershell

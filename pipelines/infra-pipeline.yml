@@ -1,6 +1,6 @@
 # Infrastructure pipeline: PRs plan every environment with read-only identities; main also applies (behind the
-# checks on each apply service connection) and grants the API identity SQL access. Add an environment by
-# appending one template call.
+# approvers on each Azure DevOps Environment and the checks on each apply service connection) and grants the API
+# identity SQL access. Add an environment by appending one template call.
 
 name: infra-$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -48,7 +48,7 @@ stages:
       planServiceConnectionId: 53f1a67e-3355-46c2-a6e7-9e76ecafdf18
       applyServiceConnectionId: 1da5b51f-af1f-4cbd-8560-d8215c820a30
 
-  # Each environment after dev waits for the approval check on its apply service connection.
+  # Each environment after dev waits for the approvers set on its Azure DevOps Environment.
   - template: templates/terraform-environment.yml
     parameters:
       environment: qa
