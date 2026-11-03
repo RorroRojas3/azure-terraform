@@ -19,8 +19,8 @@ resource "azuredevops_serviceendpoint_azurerm" "pipeline" {
   }
 }
 
-# Checks live on the apply connection rather than the Environment: YAML can skip an Environment, but it can't
-# use a service connection without passing that connection's checks.
+# Branch control and the lock live on the apply connection rather than the Environment: YAML can skip an Environment,
+# but it can't use a service connection without passing that connection's checks.
 resource "azuredevops_check_branch_control" "apply" {
   for_each = var.environments
 
@@ -42,22 +42,13 @@ resource "azuredevops_check_exclusive_lock" "apply" {
   target_resource_type = "endpoint"
 }
 
-resource "azuredevops_check_approval" "apply" {
-  for_each = { for env, config in var.environments : env => config if length(config.approver_emails) > 0 }
-
-  project_id            = data.azuredevops_project.this.id
-  target_resource_id    = azuredevops_serviceendpoint_azurerm.pipeline["${each.key}-apply"].id
-  target_resource_type  = "endpoint"
-  approvers             = [for email in each.value.approver_emails : one(data.azuredevops_users.approver[email].users).id]
-  requester_can_approve = each.value.requester_can_approve
-}
-
+# Approvers are deliberately not managed here: they're set in Azure DevOps on each Environment's Approvals and checks.
 resource "azuredevops_environment" "this" {
   for_each = var.environments
 
   project_id  = data.azuredevops_project.this.id
   name        = "${var.name_prefix}-${each.key}"
-  description = "Deployment history for ${each.key}. Approvals live on the apply service connection."
+  description = "Deployment target for ${each.key}. Approvers are set here in Azure DevOps, not in Terraform."
 }
 
 resource "azuredevops_pipeline_authorization" "service_connection" {

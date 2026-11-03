@@ -19,12 +19,6 @@ data "azurerm_role_definition" "assignable" {
   scope = data.azurerm_subscription.current.id
 }
 
-data "azuredevops_users" "approver" {
-  for_each = toset(flatten([for env in values(var.environments) : env.approver_emails]))
-
-  principal_name = each.value
-}
-
 # The pipeline is created once by hand (it needs the Azure Pipelines GitHub app); after that, resources are
 # pre-authorized for it so runs don't stop at "needs permission".
 data "azuredevops_build_definition" "infra" {
