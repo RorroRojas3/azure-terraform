@@ -49,8 +49,8 @@ Then run, with the environment you want in place of `<env>`:
 
 ```powershell
 az login
-terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
-terraform -chdir=terraform plan -var-file=environments/<env>/terraform.tfvars
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
+terraform -chdir=terraform plan "-var-file=environments/<env>/terraform.tfvars"
 ```
 
 Add `-reconfigure` whenever you switch environments (it's needed once `terraform/.terraform` exists). Never use `-migrate-state`: it would copy one environment's state into another.
@@ -142,7 +142,7 @@ Resource names are fixed (`andes-softsol-<type>-<env>`, built from `local.names`
    - Choose sizing.
    - Set `developer_principal_ids = []`.
    - Set `allowed_ip_addresses`, for example `["203.0.113.10"]`. Use `[]` for no IPs.
-5. **Create the empty state:** `terraform -chdir=terraform init -backend-config=environments/<env>/backend.hcl`, run by someone in `state_contributor_object_ids`. If `terraform/.terraform` already exists from another environment, add `-reconfigure` once. Never use `-migrate-state`, because it would copy one environment's state into another.
+5. **Create the empty state:** `terraform -chdir=terraform init "-backend-config=environments/<env>/backend.hcl"`, run by someone in `state_contributor_object_ids`. If `terraform/.terraform` already exists from another environment, add `-reconfigure` once. Never use `-migrate-state`, because it would copy one environment's state into another.
 6. **Add the template call** in `pipelines/infra-pipeline.yml` with both connection IDs from `service_connection_ids` and `dependsOn: [apply_<previous env>]` ([Pipeline](pipeline.md#add-an-environments-template-call)).
 7. **Add the approval before the first merge.** The bootstrap created the Environment without approvers, and Terraform never manages them. In Azure DevOps, open **Pipelines → Environments → `andes-softsol-<env>` → Approvals and checks**, add **Approvals**, and choose the approvers. Leave **Allow approvers to approve their own runs** on while one person both merges and approves. Do this before you merge the pull request from step 6: until the approval exists, the environment's apply runs automatically, prod included.
 
@@ -186,7 +186,7 @@ For example, the App Service plan fails with `Operation cannot be completed with
 - **Check App Service quota.** The quickest test is to create and immediately delete a throwaway plan with the same SKU: `az appservice plan create ... --sku B1 -l <region>`, then `az appservice plan delete ... --yes`. The **Quotas** page in the portal also shows it.
 - **Move an environment that isn't in use yet.** The resource group stays where it is: `location` in `bootstrap/terraform/terraform.tfvars` only sets the group's metadata location, and changing it replaces the group, which `prevent_destroy` blocks.
   1. Change `location` in the environment's `terraform.tfvars`.
-  2. An administrator destroys what exists, locally: `terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars`.
+  2. An administrator destroys what exists, locally: `terraform -chdir=terraform destroy "-var-file=environments/<env>/terraform.tfvars"`.
   3. Free the soft-deleted names. Purge the Key Vault with `az keyvault purge --name <vault> --location <old region>` (only possible while purge protection is off, as in every environment today). Permanently delete the Log Analytics workspace with `az monitor log-analytics workspace recover ...`, then `az monitor log-analytics workspace delete ... --force true --yes`.
   4. Re-apply. If you skip step 3, the apply fails because the soft-deleted resources still reserve those names.
 
@@ -196,7 +196,7 @@ This happens when you rebuild an environment after deleting it outside Terraform
 
 Two more leftovers: the deleted Key Vault stays soft-deleted and reserves its name, and a soft-deleted Log Analytics workspace is recovered automatically when you recreate it with the same name, resource group and region.
 
-- **Prefer `terraform destroy`.** An administrator with state access runs `terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars`, which removes diagnostic settings properly. The resource group and role assignments owned by `bootstrap/terraform` aren't affected. For a full teardown see [Manual deployment, Part 9](manual-deployment.md#part-9-proper-teardown).
+- **Prefer `terraform destroy`.** An administrator with state access runs `terraform -chdir=terraform destroy "-var-file=environments/<env>/terraform.tfvars"`, which removes diagnostic settings properly. The resource group and role assignments owned by `bootstrap/terraform` aren't affected. For a full teardown see [Manual deployment, Part 9](manual-deployment.md#part-9-proper-teardown).
 - **If the group is already gone, purge the vault before the next run.** This works only while purge protection is off, as in every environment today:
 
   ```powershell
@@ -206,7 +206,7 @@ Two more leftovers: the deleted Key Vault stays soft-deleted and reserves its na
 - **If the apply still fails on the diagnostic setting, import it instead of deleting it,** then re-run the pipeline. In Git Bash on Windows, prefix the command with `MSYS_NO_PATHCONV=1` so the path isn't rewritten.
 
   ```powershell
-  terraform -chdir=terraform import -var-file=environments/<env>/terraform.tfvars azurerm_monitor_diagnostic_setting.key_vault "/subscriptions/<subscription-id>/resourceGroups/andes-softsol-rg-<env>/providers/Microsoft.KeyVault/vaults/andes-softsol-kv-<env>|to-log-analytics"
+  terraform -chdir=terraform import "-var-file=environments/<env>/terraform.tfvars" azurerm_monitor_diagnostic_setting.key_vault "/subscriptions/<subscription-id>/resourceGroups/andes-softsol-rg-<env>/providers/Microsoft.KeyVault/vaults/andes-softsol-kv-<env>|to-log-analytics"
   ```
 
 ### The SQL grant didn't run after a failed apply
@@ -219,7 +219,7 @@ Point Terraform at the broken environment first, or `sql_access` comes from whic
 
 ```powershell
 az login
-terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
 Connect-AzAccount
 $access = terraform -chdir=terraform output -json sql_access | ConvertFrom-Json
 ./scripts/Grant-SqlManagedIdentityAccess.ps1 `
@@ -268,7 +268,7 @@ Pick one fix. Don't delete `.terraform/`.
 - **Reconnect to the real backend once it exists again.** Run `init -reconfigure` with the backend file for the module:
 
   ```powershell
-  terraform -chdir=<module> init -reconfigure -backend-config=<backend.hcl>
+  terraform -chdir=<module> init -reconfigure "-backend-config=<backend.hcl>"
   ```
 
   For `terraform/`, use `environments/<env>/backend.hcl`. For `bootstrap/terraform`, use `backend.hcl`.

@@ -168,7 +168,7 @@ The API's database user gets `db_datareader` and `db_datawriter`, which can't ch
 
   ```powershell
   az login
-  terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
+  terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
   Connect-AzAccount
   $access = terraform -chdir=terraform output -json sql_access | ConvertFrom-Json
   ./scripts/Grant-SqlManagedIdentityAccess.ps1 `

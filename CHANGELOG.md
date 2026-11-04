@@ -28,6 +28,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - Resources are now named with the `andes-softsol` company prefix (for example `andes-softsol-kv-dev`, `andessoftsolst<env>`, `andes-softsol-sc-<env>-apply`). Nothing was migrated; every environment was rebuilt from scratch. `name_prefix` now accepts 2-13 lowercase letters, digits or single dashes so Key Vault names fit 24 characters.
 - Every pull request into `main` now runs the plans, because the PR trigger no longer filters by path. This lets every PR report the `andes-infra` check that branch protection requires.
 - The infrastructure pipeline no longer batches CI runs. A run waiting at an approval still counts as running, so batching would have held every later merge back from dev.
+- The service connection IDs in `pipelines/infra-pipeline.yml` and the `sql_admin_group_object_id` in each `terraform/environments/<env>/terraform.tfvars` now point at the objects created when every environment was rebuilt from zero on 2026-11-03. The previous ones were deleted with the teardown.
+
+### Fixed
+
+- The PowerShell commands in the docs now quote Terraform arguments that contain a dot, such as `"-backend-config=backend.hcl"`. PowerShell otherwise splits them in two, and `terraform init` failed with "Too many command line arguments".
 
 ### Security
 
