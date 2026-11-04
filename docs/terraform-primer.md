@@ -42,7 +42,7 @@ terraform -chdir=terraform plan
 
 ```powershell
 az login
-terraform -chdir=terraform init -backend-config=environments/dev/backend.hcl
+terraform -chdir=terraform init "-backend-config=environments/dev/backend.hcl"
 ```
 
 `-backend-config` supplies the per-environment settings (storage account, container, blob name) that `terraform/versions.tf` deliberately leaves blank. Terraform signs in to the state account with your `az login` session.
@@ -50,7 +50,7 @@ terraform -chdir=terraform init -backend-config=environments/dev/backend.hcl
 To switch to a different environment, add `-reconfigure`:
 
 ```powershell
-terraform -chdir=terraform init -reconfigure -backend-config=environments/qa/backend.hcl
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/qa/backend.hcl"
 ```
 
 `-reconfigure` tells Terraform to forget the previous backend and use the new one, without moving any data.
@@ -62,7 +62,7 @@ terraform -chdir=terraform init -reconfigure -backend-config=environments/qa/bac
 `plan` refreshes the state against Azure, compares it to the code and tfvars, and prints what it would change. It changes nothing.
 
 ```powershell
-terraform -chdir=terraform plan -var-file=environments/dev/terraform.tfvars
+terraform -chdir=terraform plan "-var-file=environments/dev/terraform.tfvars"
 ```
 
 `-var-file` supplies the environment's values. Terraform doesn't read `environments/<env>/terraform.tfvars` on its own, because the file isn't in the module's root folder.
@@ -83,7 +83,7 @@ The last line summarizes the counts: `Plan: 2 to add, 1 to change, 0 to destroy.
 `apply` runs a plan and, after you type `yes`, changes Azure and updates the state.
 
 ```powershell
-terraform -chdir=terraform apply -var-file=environments/dev/terraform.tfvars
+terraform -chdir=terraform apply "-var-file=environments/dev/terraform.tfvars"
 ```
 
 Normally you never do this by hand. The pipeline applies a **saved plan** (`plan -out`), which guarantees it applies exactly what was reviewed. If anything changed since, Terraform rejects the stale plan. [Manual deployment](manual-deployment.md#part-6b-deploy-by-hand-from-a-workstation) covers the break-glass local route.
@@ -110,7 +110,7 @@ A `lifecycle { prevent_destroy = true }` block makes any plan that would destroy
 Sometimes a real resource exists that Terraform doesn't know about, and the next apply fails with `a resource with the ID ... already exists - to be managed via Terraform this resource needs to be imported into the State`. `import` adopts the existing object into state instead of creating it:
 
 ```powershell
-terraform -chdir=terraform import -var-file=environments/dev/terraform.tfvars <resource address> "<azure resource ID>"
+terraform -chdir=terraform import "-var-file=environments/dev/terraform.tfvars" <resource address> "<azure resource ID>"
 ```
 
 [Operations](operations.md#apply-fails-because-a-diagnostic-setting-already-exists) has the one import this repo has needed. Under Git Bash on Windows, prefix `import` with `MSYS_NO_PATHCONV=1` so the leading `/subscriptions/...` isn't rewritten as a Windows path.

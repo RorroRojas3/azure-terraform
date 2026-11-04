@@ -2,6 +2,8 @@
 
 This is the DevOps runbook for taking the repo from nothing to running environments, for deploying by hand when you have to, and for rebuilding after a teardown. Commands are PowerShell. If you've never used Terraform, read the [Terraform primer](terraform-primer.md) first.
 
+> **Why some arguments are quoted:** PowerShell splits a native-command argument that starts with `-` and contains a `.`, so `-backend-config=backend.hcl` reaches Terraform as `-backend-config=backend` and `.hcl`, and `init` fails with "Too many command line arguments". Quoting the whole argument, as in `"-backend-config=backend.hcl"`, passes it through intact. Keep the quotes on `-backend-config`, `-var-file`, `-out` and `-target` values that contain a dot; the Linux pipeline agents use bash and aren't affected.
+
 ## Why there is manual work at all
 
 The pipeline builds each environment's resources (Part 6a), but it can't build itself:
@@ -134,7 +136,7 @@ If Azure DevOps refuses to save because the service connections the YAML names d
 
 ```powershell
 az login
-terraform -chdir=bootstrap/terraform init -backend-config=backend.hcl
+terraform -chdir=bootstrap/terraform init "-backend-config=backend.hcl"
 terraform -chdir=bootstrap/terraform plan
 terraform -chdir=bootstrap/terraform apply
 ```
@@ -191,13 +193,13 @@ The read-only plan identity can't create the initial state, because the azurerm 
 
 ```powershell
 az login
-terraform -chdir=terraform init -backend-config=environments/<env>/backend.hcl
+terraform -chdir=terraform init "-backend-config=environments/<env>/backend.hcl"
 ```
 
 If `terraform/.terraform` already exists from another environment, add `-reconfigure`:
 
 ```powershell
-terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
 ```
 
 Never use `-migrate-state` here, because it would copy one environment's state into another.
@@ -229,13 +231,13 @@ This is break-glass. **A local apply bypasses approvals, the apply identity's AB
 
 ```powershell
 az login
-terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
 ```
 
 **2. Plan to a file and read it.**
 
 ```powershell
-terraform -chdir=terraform plan -var-file=environments/<env>/terraform.tfvars -out=<env>.tfplan
+terraform -chdir=terraform plan "-var-file=environments/<env>/terraform.tfvars" "-out=<env>.tfplan"
 ```
 
 **3. Apply that exact plan.**
@@ -329,7 +331,7 @@ Microsoft's conditions ([Recover a deleted storage account](https://learn.micros
 
    ```powershell
    az login
-   terraform -chdir=bootstrap/terraform init -reconfigure -backend-config=backend.hcl
+   terraform -chdir=bootstrap/terraform init -reconfigure "-backend-config=backend.hcl"
    terraform -chdir=bootstrap/terraform plan
    terraform -chdir=bootstrap/terraform apply
    ```
@@ -417,8 +419,8 @@ Do this in order. Each step depends on the one before it.
 
 ```powershell
 az login
-terraform -chdir=terraform init -reconfigure -backend-config=environments/<env>/backend.hcl
-terraform -chdir=terraform destroy -var-file=environments/<env>/terraform.tfvars
+terraform -chdir=terraform init -reconfigure "-backend-config=environments/<env>/backend.hcl"
+terraform -chdir=terraform destroy "-var-file=environments/<env>/terraform.tfvars"
 ```
 
 Key Vaults and Log Analytics workspaces are soft-deleted rather than removed, and the Key Vault keeps its name until you purge it (`az keyvault purge`, Part 8, Option B).

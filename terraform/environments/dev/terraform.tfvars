@@ -7,7 +7,7 @@ allowed_ip_addresses = ["136.55.198.208"]
 
 # From the sql_admin_group_object_ids output of bootstrap/terraform.
 sql_admin_group_name      = "andes-softsol-sg-sql-admins-dev"
-sql_admin_group_object_id = "7730ac76-5463-41c7-98d0-7d67df44016d"
+sql_admin_group_object_id = "990c16c7-f950-48b1-a8d5-f4d83a39bdc2"
 
 developer_principal_ids = ["4ee09cb0-d7e7-4be4-b82f-2674695eb9df"]
 

@@ -39,8 +39,8 @@ Two settings, two different constraints:
   1. Destroy only the vault. Never run a plain `terraform destroy` here; it would destroy all of prod, data included.
 
      ```powershell
-     terraform -chdir=terraform init -reconfigure -backend-config=environments/prod/backend.hcl
-     terraform -chdir=terraform destroy -target=azurerm_key_vault.this -var-file=environments/prod/terraform.tfvars
+     terraform -chdir=terraform init -reconfigure "-backend-config=environments/prod/backend.hcl"
+     terraform -chdir=terraform destroy "-target=azurerm_key_vault.this" "-var-file=environments/prod/terraform.tfvars"
      ```
 
      A targeted destroy also destroys everything that references the vault. Read the plan: it includes the vault's diagnostic setting and role assignments, and the API web app, whose `KeyVault__Uri` setting comes from the vault. You redeploy the API afterwards.
